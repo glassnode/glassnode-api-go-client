@@ -1,0 +1,7 @@
+Glassnode Go API client
+Copyright 2026 Glassnode
+
+Endpoint models and fixtures were extracted and adapted from
+https://github.com/glassnode/glassnode-cli/tree/340ea59/internal/api
+(Apache License 2.0). API feature coverage was informed by
+https://github.com/glassnode/glassnode-api-ts-client.
