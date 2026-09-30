@@ -3,29 +3,26 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
-	"time"
-
 	glassnode "github.com/glassnode/glassnode-api-go-client"
+	"github.com/glassnode/glassnode-api-go-client/examples/internal/example"
+	"time"
 )
 
 func main() {
-	client, err := glassnode.NewClient(os.Getenv("GLASSNODE_API_KEY"))
+	example.Run(run)
+}
+
+func run(ctx context.Context, client *glassnode.Client, params *glassnode.MetricParams) error {
+	points, err := client.GetTimeSeries(ctx, "market/price_usd_close", params)
 	if err != nil {
-		log.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	points, err := client.GetTimeSeries(ctx, "market/price_usd_close", &glassnode.MetricParams{
-		Asset: "BTC", Since: time.Now().AddDate(0, 0, -30), Interval: "24h",
-	})
-	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	for _, point := range points {
-		if point.Value != nil {
-			fmt.Printf("%s: %.2f\n", time.Unix(point.Timestamp, 0).UTC(), *point.Value)
+		if point.Value == nil {
+			fmt.Printf("%s: missing\n", time.Unix(point.Timestamp, 0).UTC().Format(time.DateOnly))
+			continue
 		}
+		fmt.Printf("%s: %.2f USD\n", time.Unix(point.Timestamp, 0).UTC().Format(time.DateOnly), *point.Value)
 	}
+	return nil
 }

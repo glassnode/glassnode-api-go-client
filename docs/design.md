@@ -44,7 +44,8 @@ caller-supplied transport (as in the CLI adapter).
 
 Never follow redirects, in either auth mode. A 3xx is an HTTP error: this avoids
 forwarding credentials to a different host. User HTTP-client redirect behavior
-is deliberately overridden. No signed-payment transport is provided.
+is deliberately overridden. No signed-payment transport is currently provided. Built-in OAuth refresh and
+x402 payment support are open design decisions, rather than excluded capabilities.
 
 Default retries: two retries (three attempts) for GET transport/read failures,
 429 and 5xx responses. Exponential backoff with full jitter, one-second base,
@@ -75,7 +76,7 @@ retry. The SDK does not cache results or add a global rate limiter.
 | Retries, jitter, Retry-After | Configurable `RetryPolicy` |
 | Header/query credentials | Header default, explicit query option |
 | Browser bundles, Zod runtime DSL | Not relevant to Go |
-| x402 signed payments | Deferred; no automatic payment retries |
+| x402 signed payments | Open design decision; not implemented yet |
 
 ## CLI migration
 
@@ -100,3 +101,14 @@ malformed responses, endpoint/query validation, redirects, retry counts and
 Retry-After, cancellation in flight and during backoff, timeout behavior and
 concurrent use. Run `go test -race ./...` and `go vet ./...` in both modules.
 Examples must compile. Verify private visibility and pushed branches remotely.
+
+## Module packaging
+
+The library is the root module with one public package, `glassnode`. It has no
+third-party runtime dependencies. Root semantic-version tags version the SDK;
+commits resolve to pseudo-versions before a release is tagged.
+
+`examples/go.mod` defines a separate, unpublished module. Go module archives
+exclude nested modules, keeping executable examples and their setup out of the
+client distributable. A relative replacement targets the local SDK checkout;
+CI explicitly vets and builds examples in addition to testing the root module.

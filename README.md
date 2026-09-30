@@ -1,5 +1,10 @@
 # Glassnode API client for Go
 
+[![CI](https://github.com/glassnode/glassnode-api-go-client/actions/workflows/ci.yml/badge.svg)](https://github.com/glassnode/glassnode-api-go-client/actions/workflows/ci.yml)
+[![Go version](https://img.shields.io/badge/Go-%E2%89%A51.24-00ADD8.svg?logo=go)](./go.mod)
+[![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](./go.mod)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
+
 An idiomatic, dependency-free Go client for the Glassnode API. Extracted from
 [`glassnode-cli`](https://github.com/glassnode/glassnode-cli), with typed metric
 helpers, metadata and usage endpoints, cancellation and bounded retries.
@@ -160,12 +165,41 @@ retain the original cause for inspection; do not log unwrapped causes or raw
 requests when they may include secrets. A custom refreshing transport must also
 protect any newly acquired token that the SDK does not know.
 
+## Packaging and examples
+
+Install the root Go module and import its single `glassnode` package. There is
+no binary to install and no build or bundling step. The SDK has no third-party
+runtime dependencies. Releases use root Git tags such as `v0.1.0`; until the
+first release, Go resolves commits to pseudo-versions.
+
+Runnable programs live in [examples](examples/README.md), a separate nested Go
+module. Its `go.mod` makes Go exclude the entire directory from the SDK module
+zip downloaded by consumers. The examples use a relative `replace` to run
+against the checkout, without fetching a private dependency or changing the
+SDK's module file. Clone the repository to run them:
+
+```sh
+export GLASSNODE_API_KEY='your-api-key'
+cd examples
+go run ./price
+go run ./ohlc
+go run ./bulk
+go run ./metadata
+go run ./usage
+go run ./custom
+```
+
+For OAuth, set `GLASSNODE_ACCESS_TOKEN` instead of `GLASSNODE_API_KEY`. See
+[examples/README.md](examples/README.md) for output, credentials and permissions.
+
 ## Develop
 
 ```sh
 go test -race ./...
 go vet ./...
-go run ./examples/price
+cd examples
+go vet ./...
+go build ./...
 ```
 
 Tests use local HTTP servers and need no API credentials. CI checks the minimum
@@ -173,5 +207,7 @@ Go version and the latest stable Go version. API design, TS feature mapping and
 CLI boundaries are in [docs/design.md](docs/design.md). Tracking issue:
 [GN-159](https://glassnode.atlassian.net/browse/GN-159).
 
-The module is pre-1.0 and uses Go module versions. No public release or paid
-x402 signing is included. License: Apache 2.0; see [NOTICE](NOTICE) for provenance.
+The module is pre-1.0 and uses Go module versions. OAuth bearer tokens are
+supported; built-in refresh and x402 payment support remain open design
+decisions. No public release is included. License: Apache 2.0; see
+[NOTICE](NOTICE) for provenance.
