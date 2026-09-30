@@ -40,16 +40,17 @@ type NameEntry struct {
 
 // MetricMetadata describes a metric, its selectors and available variants.
 type MetricMetadata struct {
-	Path          string              `json:"path,omitempty"`
-	Tier          int                 `json:"tier,omitempty"`
-	IsPIT         bool                `json:"is_pit,omitempty"`
-	Parameters    map[string][]string `json:"parameters"`
-	Queried       map[string]string   `json:"queried,omitempty"`
-	Refs          Refs                `json:"refs,omitempty"`
-	BulkSupported bool                `json:"bulk_supported"`
-	TimeRange     *TimeRange          `json:"timerange,omitempty"`
-	Modified      int64               `json:"modified,omitempty"`
-	Descriptors   *MetricDescriptors  `json:"descriptors,omitempty"`
+	Path               string              `json:"path,omitempty"`
+	Tier               int                 `json:"tier,omitempty"`
+	IsPIT              bool                `json:"is_pit,omitempty"`
+	Parameters         map[string][]string `json:"parameters"`
+	ParametersDefaults map[string][]string `json:"parameters_defaults,omitempty"`
+	Queried            map[string]string   `json:"queried,omitempty"`
+	Refs               Refs                `json:"refs,omitempty"`
+	BulkSupported      bool                `json:"bulk_supported"`
+	TimeRange          *TimeRange          `json:"timerange,omitempty"`
+	Modified           int64               `json:"modified,omitempty"`
+	Descriptors        *MetricDescriptors  `json:"descriptors,omitempty"`
 }
 
 // MetricVariant links the base, bulk and point-in-time metric paths.

@@ -3,9 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
+
 	glassnode "github.com/glassnode/glassnode-api-go-client"
 	"github.com/glassnode/glassnode-api-go-client/examples/internal/example"
-	"time"
 )
 
 func main() {

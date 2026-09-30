@@ -130,15 +130,22 @@ func (c *Client) ListNames(ctx context.Context, endpoint, filter string) ([]stri
 	return names, nil
 }
 
+// ListMetricTags lists the available metric tags.
 func (c *Client) ListMetricTags(ctx context.Context) ([]string, error) {
 	return c.ListNames(ctx, "/v1/metadata/tags", "")
 }
+
+// ListAssetTags lists asset tags, optionally scoped by a CEL filter.
 func (c *Client) ListAssetTags(ctx context.Context, filter string) ([]string, error) {
 	return c.ListNames(ctx, "/v1/metadata/assets/tags", filter)
 }
+
+// ListAssetCategories lists asset categories, optionally scoped by a CEL filter.
 func (c *Client) ListAssetCategories(ctx context.Context, filter string) ([]string, error) {
 	return c.ListNames(ctx, "/v1/metadata/assets/categories", filter)
 }
+
+// ListAssetBlockchains lists asset blockchains, optionally scoped by a CEL filter.
 func (c *Client) ListAssetBlockchains(ctx context.Context, filter string) ([]string, error) {
 	return c.ListNames(ctx, "/v1/metadata/assets/blockchains", filter)
 }

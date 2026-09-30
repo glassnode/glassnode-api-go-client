@@ -3,6 +3,7 @@ package glassnode
 import (
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 )
@@ -43,20 +44,21 @@ func WithHTTPClient(client *http.Client) Option {
 		if client == nil {
 			return &InputError{"HTTP client", "must not be nil"}
 		}
-		copy := *client
-		c.httpClient = &copy
+		cloned := *client
+		c.httpClient = &cloned
 		return nil
 	}
 }
 
 // WithTimeout sets the per-attempt HTTP timeout. Zero disables it. Use a context
 // deadline to bound the entire operation, including all retries and waits.
+// This overrides WithHTTPClient's timeout regardless of option order.
 func WithTimeout(timeout time.Duration) Option {
 	return func(c *Client) error {
 		if timeout < 0 {
 			return &InputError{"timeout", "must not be negative"}
 		}
-		c.httpClient.Timeout = timeout
+		c.timeout = &timeout
 		return nil
 	}
 }
@@ -65,13 +67,12 @@ func WithTimeout(timeout time.Duration) Option {
 // default header authentication to keep credentials out of proxy/access logs.
 func WithAPIKeyInQuery() Option { return func(c *Client) error { c.queryAuth = true; return nil } }
 
-// WithBearerToken uses an existing OAuth access token instead of the API key.
-// Token acquisition, persistence and refresh belong to the application. A
-// refreshing http.RoundTripper can be supplied through WithHTTPClient.
+// WithBearerToken uses an existing OAuth access token. Pass an empty API key
+// to NewClient. For refreshable tokens, use WithTokenSource instead.
 func WithBearerToken(token string) Option {
 	return func(c *Client) error {
-		if strings.TrimSpace(token) == "" || strings.ContainsAny(token, "\r\n") {
-			return &InputError{"bearer token", "must be non-empty and contain no line breaks"}
+		if !validBearerToken(token) {
+			return &InputError{"bearer token", "must be non-empty and contain no whitespace or control characters"}
 		}
 		c.bearerToken = token
 		return nil
@@ -95,9 +96,28 @@ func WithRetryPolicy(policy RetryPolicy) Option {
 func WithUserAgent(agent string) Option {
 	return func(c *Client) error {
 		if strings.TrimSpace(agent) == "" || strings.ContainsAny(agent, "\r\n") {
-			return &InputError{"user agent", "must be non-empty and contain no line breaks"}
+			return &InputError{"user agent", "must be non-empty and contain no whitespace or control characters"}
 		}
 		c.userAgent = agent
+		return nil
+	}
+}
+
+// WithTokenSource uses OAuth tokens supplied at request time. Pass an empty API
+// key to NewClient. Each token is redacted from that call's error messages.
+func WithTokenSource(source TokenSource) Option {
+	return func(c *Client) error {
+		if source == nil {
+			return &InputError{"token source", "must not be nil"}
+		}
+		value := reflect.ValueOf(source)
+		switch value.Kind() {
+		case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+			if value.IsNil() {
+				return &InputError{"token source", "must not be nil"}
+			}
+		}
+		c.tokenSource = source
 		return nil
 	}
 }

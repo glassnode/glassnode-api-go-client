@@ -18,11 +18,16 @@ import (
 
 func testClient(t *testing.T, handler http.HandlerFunc, options ...Option) (*Client, *httptest.Server) {
 	t.Helper()
+	return testClientWithKey(t, "test-secret-key", handler, options...)
+}
+
+func testClientWithKey(t *testing.T, key string, handler http.HandlerFunc, options ...Option) (*Client, *httptest.Server) {
+	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	opts := []Option{WithBaseURL(server.URL), WithHTTPClient(server.Client()), WithRetryPolicy(RetryPolicy{})}
 	opts = append(opts, options...)
-	client, err := NewClient("test-secret-key", opts...)
+	client, err := NewClient(key, opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,13 +68,15 @@ func TestAuthModesAndRedirects(t *testing.T) {
 			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetCalls.Add(1) }))
 			defer target.Close()
 			options := []Option{}
+			key := "test-secret-key"
 			if mode == "query" {
 				options = append(options, WithAPIKeyInQuery())
 			}
 			if mode == "bearer" {
+				key = ""
 				options = append(options, WithBearerToken("bearer-secret"))
 			}
-			client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			client, _ := testClientWithKey(t, key, func(w http.ResponseWriter, r *http.Request) {
 				switch mode {
 				case "header":
 					if r.Header.Get("X-Api-Key") != "test-secret-key" {
@@ -337,15 +344,15 @@ func TestConstructorValidation(t *testing.T) {
 
 func TestRetryAfterMinimumWait(t *testing.T) {
 	var attempts atomic.Int32
-	var first time.Time
+	var first atomic.Int64
 	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if attempts.Add(1) == 1 {
-			first = time.Now()
+			first.Store(time.Now().UnixNano())
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(429)
 			return
 		}
-		if time.Since(first) < time.Second {
+		if time.Since(time.Unix(0, first.Load())) < time.Second {
 			t.Error("retried before Retry-After elapsed")
 		}
 		fmt.Fprint(w, `[]`)

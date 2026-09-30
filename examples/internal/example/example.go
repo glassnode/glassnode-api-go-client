@@ -4,7 +4,6 @@ package example
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -42,12 +41,7 @@ func Run(run func(context.Context, *glassnode.Client, *glassnode.MetricParams) e
 		cancel()
 	}
 	if err != nil {
-		var apiErr *glassnode.APIError
-		if errors.As(err, &apiErr) {
-			fmt.Fprintf(os.Stderr, "API status %d: %s\n", apiErr.StatusCode, apiErr.Endpoint)
-		} else {
-			fmt.Fprintln(os.Stderr, err)
-		}
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

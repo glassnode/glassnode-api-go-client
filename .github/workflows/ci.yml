@@ -10,17 +10,24 @@ jobs:
       matrix:
         go: ['1.24.x', 'stable']
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go }}
+          cache: false
       - name: Format
         run: test -z "$(gofmt -l .)"
+      - name: Check module files
+        run: go mod tidy -diff
       - name: Vet
         run: go vet ./...
       - name: Test with race detector
         run: go test -race ./...
+      - name: Check example module files
+        working-directory: examples
+        run: go mod tidy -diff
       - name: Vet examples
         working-directory: examples
         run: go vet ./...

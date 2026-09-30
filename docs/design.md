@@ -10,7 +10,8 @@ Extract the reusable HTTP client and endpoint models from
 ## Public API and developer experience
 
 - `NewClient(apiKey, ...Option) (*Client, error)` validates configuration once.
-  No implicit environment reads, config files, or global state.
+  No implicit environment reads, config files, or global state. Authentication
+  options are mutually exclusive. Explicit timeouts do not depend on option order.
 - All calls take `context.Context`. Context deadlines bound the entire call,
   including retries. The default HTTP timeout is one minute per attempt.
 - `MetricParams` gives common parameters readable Go field names and `time.Time`
@@ -39,20 +40,25 @@ Extract the reusable HTTP client and endpoint models from
 
 API keys default to the `X-Api-Key` header for server-side Go applications;
 `WithAPIKeyInQuery` supports legacy query authentication. `WithBearerToken`
-supports an existing OAuth token. Refreshable authentication belongs in a
-caller-supplied transport (as in the CLI adapter).
+supports an existing OAuth token. `WithTokenSource` calls an application-owned,
+concurrent-safe token source
+before each attempt, allowing refresh without a placeholder token. Each call
+retains its own tokens for error redaction without mutable Client state. Login,
+persistence and expiry-aware refresh remain in the token-source implementation.
+Token-source failures are `AuthError`s and never retried, even when their cause
+is a transport error. HTTP 401 does not trigger refresh or retry.
 
 Never follow redirects, in either auth mode. A 3xx is an HTTP error: this avoids
 forwarding credentials to a different host. User HTTP-client redirect behavior
-is deliberately overridden. No signed-payment transport is currently provided. Built-in OAuth refresh and
-x402 payment support are open design decisions, rather than excluded capabilities.
+is deliberately overridden. OAuth token sources are supported; x402 payments
+are deferred.
 
 Default retries: two retries (three attempts) for GET transport/read failures,
 429 and 5xx responses. Exponential backoff with full jitter, one-second base,
 30-second cap. Honor `Retry-After` seconds or HTTP dates as a minimum wait; if it
 exceeds the configured cap, return the HTTP error rather than retry early.
-Caller cancellation never retries and also interrupts retry waits. OAuth 401
-refresh remains in the CLI transport and happens at most once per request.
+Caller cancellation never retries and also interrupts retry waits. Applications should supply usable OAuth tokens before the request; 401 responses
+are returned immediately.
 
 Input validation rejects malformed paths, empty repeated values, overridden
 credentials, non-JSON formats and invalid time ranges. Decode failures never
@@ -76,7 +82,8 @@ retry. The SDK does not cache results or add a global rate limiter.
 | Retries, jitter, Retry-After | Configurable `RetryPolicy` |
 | Header/query credentials | Header default, explicit query option |
 | Browser bundles, Zod runtime DSL | Not relevant to Go |
-| x402 signed payments | Open design decision; not implemented yet |
+| OAuth refresh | `WithTokenSource`, application-owned refresh and storage |
+| x402 signed payments | Deferred |
 
 ## CLI migration
 

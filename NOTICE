@@ -5,3 +5,7 @@ Endpoint models and fixtures were extracted and adapted from
 https://github.com/glassnode/glassnode-cli/tree/340ea59/internal/api
 (Apache License 2.0). API feature coverage was informed by
 https://github.com/glassnode/glassnode-api-ts-client.
+
+Recorded API contract fixtures in testdata/contract were adapted from
+https://github.com/glassnode/glassnode-api-ts-client/tree/main/test/fixtures/contract
+(Apache License 2.0; captured 2026-09-23).

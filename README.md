@@ -1,6 +1,6 @@
 # Glassnode API client for Go
 
-[![CI](https://github.com/glassnode/glassnode-api-go-client/actions/workflows/ci.yml/badge.svg)](https://github.com/glassnode/glassnode-api-go-client/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/badge/CI-GitHub_Actions-2088FF.svg?logo=githubactions)](https://github.com/glassnode/glassnode-api-go-client/actions/workflows/ci.yml)
 [![Go version](https://img.shields.io/badge/Go-%E2%89%A51.24-00ADD8.svg?logo=go)](./go.mod)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](./go.mod)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
@@ -19,7 +19,7 @@ private-module resolution. Include this path in your existing `GOPRIVATE` value:
 
 ```sh
 go env -w GOPRIVATE=github.com/glassnode/glassnode-api-go-client
-go get github.com/glassnode/glassnode-api-go-client
+go get github.com/glassnode/glassnode-api-go-client@v0.1.0
 ```
 
 Do not replace an existing `GOPRIVATE` list without preserving its entries.
@@ -125,8 +125,27 @@ client, err := glassnode.NewClient(apiKey,
 The default sends the key in `X-Api-Key`, avoiding credentials in request URLs.
 `WithAPIKeyInQuery()` enables legacy `api_key` query authentication.
 `NewClient("", WithBearerToken(token))` uses an existing OAuth access token.
-Login, token storage and refresh belong to your application; supply a refreshing
-transport through `WithHTTPClient` if needed.
+For refreshable OAuth credentials, pass a token source. It is called before
+**each HTTP attempt**, including retries, and the actual token is redacted from
+that call's errors:
+
+```go
+source := glassnode.TokenSourceFunc(func(ctx context.Context) (string, error) {
+    return session.AccessToken(ctx) // your application's refresh/storage helper
+})
+client, err := glassnode.NewClient("", glassnode.WithTokenSource(source))
+```
+
+`session` is application-owned; the SDK implements neither login nor token
+storage. A `TokenSource` must honor context cancellation and support concurrent
+calls. It should return a usable token, refreshing before expiry. Token-source
+errors and HTTP 401 responses are never retried. `AuthError` identifies token
+acquisition failures. Sources must not put unknown credentials into their error
+messages; the SDK can redact only tokens returned to it.
+
+Configure exactly one API key, static bearer token or token source. Query auth
+requires an API key. Surrounding API-key whitespace, bearer-token whitespace and credential control
+characters are rejected before sending requests.
 
 `WithHTTPClient` copies the client's configuration and preserves its transport,
 jar and timeout. Supply your own `http.RoundTripper` for tracing, metrics or
@@ -142,7 +161,8 @@ retries. Decode errors, other HTTP statuses and caller cancellation never retry.
 The default HTTP timeout is one minute per attempt. A context deadline bounds
 the whole operation, including retries and waits; use one when latency matters.
 `WithTimeout(0)` disables the per-attempt timeout. A supplied HTTP client's
-timeout replaces the default unless a later `WithTimeout` option overrides it.
+timeout replaces the default; explicit `WithTimeout` always overrides it,
+regardless of option order.
 The client does not cache data or impose a global rate limiter.
 
 ## Handle errors
@@ -159,18 +179,22 @@ case errors.As(err, &apiErr):
 }
 ```
 
-`InputError`, `DecodeError` and `TransportError` distinguish other failures.
-Error text and `APIError.Detail` redact configured credentials. Transport errors
-retain the original cause for inspection; do not log unwrapped causes or raw
-requests when they may include secrets. A custom refreshing transport must also
-protect any newly acquired token that the SDK does not know.
+`InputError`, `AuthError`, `DecodeError` and `TransportError` distinguish other
+failures. SDK-generated decode and transport messages include their redacted
+cause. JSON API errors prefer the server's `message` or `error` field; response detail
+is capped at 300 characters after redaction.
+Error text and `APIError.Detail` redact configured credentials and tokens used
+within that call, including earlier retry attempts. Original causes remain
+available through `errors.Is` / `errors.As`; do not log unwrapped causes or raw
+requests when they may include secrets. A custom authenticating transport must
+protect credentials unknown to the SDK; prefer `WithTokenSource` for refresh.
 
 ## Packaging and examples
 
 Install the root Go module and import its single `glassnode` package. There is
 no binary to install and no build or bundling step. The SDK has no third-party
-runtime dependencies. Releases use root Git tags such as `v0.1.0`; until the
-first release, Go resolves commits to pseudo-versions.
+runtime dependencies. Releases use root Git tags such as `v0.1.0`; unreleased
+commits resolve to Go pseudo-versions.
 
 Runnable programs live in [examples](examples/README.md), a separate nested Go
 module. Its `go.mod` makes Go exclude the entire directory from the SDK module
@@ -208,6 +232,6 @@ CLI boundaries are in [docs/design.md](docs/design.md). Tracking issue:
 [GN-159](https://glassnode.atlassian.net/browse/GN-159).
 
 The module is pre-1.0 and uses Go module versions. OAuth bearer tokens are
-supported; built-in refresh and x402 payment support remain open design
-decisions. No public release is included. License: Apache 2.0; see
+supported through static tokens or refreshable token sources. Login flows remain
+application-owned; x402 payment support is deferred. License: Apache 2.0; see
 [NOTICE](NOTICE) for provenance.

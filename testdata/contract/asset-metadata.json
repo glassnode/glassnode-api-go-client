@@ -1,0 +1,97 @@
+{
+  "data": [
+    {
+      "id": "$CWIF",
+      "external_ids": {
+        "ccdata": "12834",
+        "coinmarketcap": "8977",
+        "coingecko": "catwifhat-2"
+      },
+      "symbol": "CWIF",
+      "name": "catwifhat",
+      "asset_type": "TOKEN",
+      "blockchains": [
+        {
+          "blockchain": "SOL",
+          "address": "7atgF8KQo4wJrD5ATGX7t1V2zVvykPJbFfNeVf1icFv1",
+          "decimals": 2,
+          "on_chain_support": true
+        }
+      ],
+      "categories": [
+        "exchanges",
+        "on-chain",
+        "spot"
+      ],
+      "logo_url": "https://cdn.glassnode.com/images/crypto-icons/$cwif/$cwif_small.webp",
+      "semantic_tags": [
+        "memeToken",
+        "solanaEcosystem",
+        "spl"
+      ],
+      "default_network": "sol"
+    },
+    {
+      "id": "$MICHI",
+      "external_ids": {
+        "ccdata": "14460",
+        "coinmarketcap": "30943",
+        "coingecko": "michicoin"
+      },
+      "symbol": "MICHI",
+      "name": "MICHI",
+      "asset_type": "TOKEN",
+      "blockchains": [
+        {
+          "blockchain": "SOL",
+          "address": "5mbK36SZ7J19An8jFochhQS4of8g6BwUjbeCSxBSoWdp",
+          "decimals": 6,
+          "on_chain_support": true
+        }
+      ],
+      "categories": [
+        "exchanges",
+        "futures",
+        "on-chain",
+        "perpetual-futures",
+        "spot"
+      ],
+      "logo_url": "https://cdn.glassnode.com/images/crypto-icons/$michi/$michi_small.webp",
+      "semantic_tags": [
+        "memeToken",
+        "solanaEcosystem",
+        "spl"
+      ],
+      "default_network": "sol"
+    },
+    {
+      "id": "00",
+      "external_ids": {
+        "ccdata": "1957",
+        "coinmarketcap": "22142",
+        "coingecko": "zer0zer0"
+      },
+      "symbol": "00",
+      "name": "ZER0ZER0",
+      "asset_type": "TOKEN",
+      "blockchains": [
+        {
+          "blockchain": "ETH",
+          "address": "0x881ba05de1e78f549cc63a8f6cabb1d4ad32250d",
+          "decimals": 18,
+          "on_chain_support": false
+        }
+      ],
+      "categories": [
+        "spot"
+      ],
+      "logo_url": "https://cdn.glassnode.com/images/crypto-icons/00/00_small.webp",
+      "semantic_tags": [
+        "erc20",
+        "ethereumEcosystem",
+        "tonEcosystem"
+      ],
+      "default_network": ""
+    }
+  ]
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+
 	glassnode "github.com/glassnode/glassnode-api-go-client"
 	"github.com/glassnode/glassnode-api-go-client/examples/internal/example"
 )

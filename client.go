@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Client calls the Glassnode API. Its configuration is immutable after
@@ -22,15 +23,18 @@ type Client struct {
 	baseURL     string
 	apiKey      string
 	bearerToken string
+	tokenSource TokenSource
 	queryAuth   bool
 	httpClient  *http.Client
 	retry       RetryPolicy
 	userAgent   string
+	timeout     *time.Duration
 }
 
 // NewClient constructs a client with header API-key authentication, a one-minute
-// timeout per attempt and two GET retries. Options apply in order. An API key
-// is required unless WithBearerToken is supplied.
+// timeout per attempt and two GET retries. Configure exactly one of an API key,
+// WithBearerToken or WithTokenSource. Explicit WithTimeout overrides a supplied
+// HTTP client timeout regardless of option order; other options apply in order.
 func NewClient(apiKey string, options ...Option) (*Client, error) {
 	c := &Client{
 		baseURL: DefaultBaseURL, apiKey: apiKey,
@@ -46,11 +50,23 @@ func NewClient(apiKey string, options ...Option) (*Client, error) {
 			return nil, err
 		}
 	}
-	if c.bearerToken == "" && strings.TrimSpace(c.apiKey) == "" {
-		return nil, &InputError{"API key", "required unless a bearer token is configured"}
+	if c.apiKey != "" && (strings.TrimSpace(c.apiKey) != c.apiKey || strings.IndexFunc(c.apiKey, unicode.IsControl) >= 0) {
+		return nil, &InputError{"API key", "must contain no surrounding whitespace or control characters"}
 	}
-	if strings.ContainsAny(c.apiKey, "\r\n") {
-		return nil, &InputError{"API key", "must contain no line breaks"}
+	modes := 0
+	for _, enabled := range []bool{c.apiKey != "", c.bearerToken != "", c.tokenSource != nil} {
+		if enabled {
+			modes++
+		}
+	}
+	if modes != 1 {
+		return nil, &InputError{"authentication", "configure exactly one API key, bearer token or token source"}
+	}
+	if c.queryAuth && c.apiKey == "" {
+		return nil, &InputError{"authentication", "query authentication requires an API key"}
+	}
+	if c.timeout != nil {
+		c.httpClient.Timeout = *c.timeout
 	}
 	// Never forward authentication to a redirect target, including subdomains.
 	c.httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -101,7 +117,7 @@ func (c *Client) buildURL(endpoint string, params url.Values) (*url.URL, error) 
 	if err != nil {
 		return nil, err
 	}
-	if c.queryAuth && c.bearerToken == "" {
+	if c.queryAuth {
 		q.Set("api_key", c.apiKey)
 	}
 	u, err := url.Parse(c.baseURL + endpoint)
@@ -116,78 +132,114 @@ func (c *Client) buildURL(endpoint string, params url.Values) (*url.URL, error) 
 // escape hatch for new endpoints; it does not decode or validate response JSON.
 // Query maps are copied and reserved authentication parameters are rejected.
 func (c *Client) Raw(ctx context.Context, endpoint string, params url.Values) ([]byte, error) {
+	body, _, err := c.raw(ctx, endpoint, params)
+	return body, err
+}
+
+func (c *Client) raw(ctx context.Context, endpoint string, params url.Values) ([]byte, *redactor, error) {
+	r := &redactor{secrets: []string{c.apiKey, c.bearerToken}}
 	u, err := c.buildURL(endpoint, params)
 	if err != nil {
-		return nil, err
+		return nil, r, err
 	}
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, r, err
 		}
-		body, header, err := c.send(ctx, endpoint, u)
+		body, header, err := c.send(ctx, endpoint, u, r)
 		if err == nil {
-			return body, nil
+			return body, r, nil
 		}
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, r, ctx.Err()
+		}
+		var authErr *AuthError
+		if errors.As(err, &authErr) {
+			return nil, r, err
 		}
 		if attempt >= c.retry.MaxRetries {
-			return nil, err
+			return nil, r, err
 		}
 		var apiErr *APIError
 		var transportErr *TransportError
 		if errors.As(err, &apiErr) {
 			if !apiErr.Retryable() {
-				return nil, err
+				return nil, r, err
 			}
 		} else if !errors.As(err, &transportErr) {
-			return nil, err
+			return nil, r, err
 		}
 		delay := c.retryDelay(attempt)
 		if retryAfter, ok := parseRetryAfter(header.Get("Retry-After"), time.Now()); ok {
 			if retryAfter > c.retry.MaxDelay {
-				return nil, err
+				return nil, r, err
 			}
 			if retryAfter > delay {
 				delay = retryAfter
 			}
 		}
 		if err := wait(ctx, delay); err != nil {
-			return nil, err
+			return nil, r, err
 		}
 	}
 }
 
-func (c *Client) send(ctx context.Context, endpoint string, u *url.URL) ([]byte, http.Header, error) {
+func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redactor) ([]byte, http.Header, error) {
+	token := c.bearerToken
+	if c.tokenSource != nil {
+		var err error
+		token, err = c.tokenSource.Token(ctx)
+		if token != "" {
+			r.secrets = append(r.secrets, token)
+		}
+		if err != nil {
+			return nil, nil, &AuthError{r.safe(err)}
+		}
+		if !validBearerToken(token) {
+			return nil, nil, &AuthError{errors.New("token source returned an empty or whitespace-containing bearer token")}
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, nil, &TransportError{endpoint, err}
+		return nil, nil, &TransportError{endpoint, r.safe(err)}
 	}
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", "application/json")
-	if c.bearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	} else if !c.queryAuth {
 		req.Header.Set("X-Api-Key", c.apiKey)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, &TransportError{endpoint, err}
+		return nil, nil, &TransportError{endpoint, r.safe(err)}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return nil, resp.Header, &APIError{resp.StatusCode, endpoint, c.redact(strings.TrimSpace(string(body)))}
+		detail := []rune(r.redact(apiErrorDetail(body)))
+		if len(detail) > 300 {
+			detail = append(detail[:300], []rune("...")...)
+		}
+		return nil, resp.Header, &APIError{resp.StatusCode, endpoint, string(detail)}
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp.Header, &TransportError{endpoint, err}
+		return nil, resp.Header, &TransportError{endpoint, r.safe(err)}
 	}
 	return body, resp.Header, nil
 }
 
 func (c *Client) redact(text string) string {
-	for _, secret := range []string{c.apiKey, c.bearerToken} {
+	return (&redactor{secrets: []string{c.apiKey, c.bearerToken}}).redact(text)
+}
+
+// A redactor belongs to one call, retaining tokens across retries without
+// shared mutable state or keeping refreshed credentials on the Client.
+type redactor struct{ secrets []string }
+
+func (r *redactor) redact(text string) string {
+	for _, secret := range r.secrets {
 		if secret != "" {
 			text = strings.ReplaceAll(text, secret, "[redacted]")
 			text = strings.ReplaceAll(text, url.QueryEscape(secret), "[redacted]")
@@ -197,7 +249,35 @@ func (c *Client) redact(text string) string {
 			}
 		}
 	}
-	return credentialPattern.ReplaceAllString(text, "[redacted]")
+	return credentialPattern.ReplaceAllString(text, "${1}[redacted]")
+}
+
+func (r *redactor) safe(err error) error {
+	return &redactedError{cause: err, message: r.redact(err.Error())}
+}
+
+type redactedError struct {
+	cause   error
+	message string
+}
+
+func (e *redactedError) Error() string { return e.message }
+func (e *redactedError) Unwrap() error { return e.cause }
+
+func apiErrorDetail(body []byte) string {
+	var response struct {
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	if json.Unmarshal(body, &response) == nil {
+		if response.Message != "" {
+			return response.Message
+		}
+		if response.Error != "" {
+			return response.Error
+		}
+	}
+	return strings.TrimSpace(string(body))
 }
 
 func (c *Client) retryDelay(attempt int) time.Duration {
@@ -256,20 +336,20 @@ func (c *Client) Get(ctx context.Context, endpoint string, params url.Values, ds
 	if dst == nil || reflect.ValueOf(dst).Kind() != reflect.Pointer || reflect.ValueOf(dst).IsNil() {
 		return &InputError{"destination", "must be a non-nil pointer"}
 	}
-	body, err := c.Raw(ctx, endpoint, params)
+	body, r, err := c.raw(ctx, endpoint, params)
 	if err != nil {
 		return err
 	}
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
 	if err := decoder.Decode(dst); err != nil {
-		return &DecodeError{endpoint, err}
+		return &DecodeError{endpoint, r.safe(err)}
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		if err == nil {
 			err = errors.New("multiple JSON values")
 		}
-		return &DecodeError{endpoint, err}
+		return &DecodeError{endpoint, r.safe(err)}
 	}
 	return nil
 }
