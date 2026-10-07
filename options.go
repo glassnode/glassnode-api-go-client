@@ -81,7 +81,8 @@ func WithBearerToken(token string) Option {
 }
 
 // WithRetryPolicy replaces the default two retries with full-jitter backoff
-// from one second to thirty seconds. Delays must be positive when enabled.
+// from one second to 65 seconds, which covers the API's one-minute rate-limit
+// window. Delays must be positive when enabled.
 func WithRetryPolicy(policy RetryPolicy) Option {
 	return func(c *Client) error {
 		if policy.MaxRetries < 0 || policy.MaxRetries > 20 || policy.MaxRetries > 0 && (policy.BaseDelay <= 0 || policy.MaxDelay < policy.BaseDelay) {
@@ -101,6 +102,20 @@ func WithUserAgent(agent string) Option {
 			return &InputError{"user agent", "must be non-blank and contain no control characters"}
 		}
 		c.userAgent = agent
+		return nil
+	}
+}
+
+// WithMaxResponseBytes rejects response bodies larger than limit with
+// ErrResponseTooLarge instead of decoding them. The default, zero, is no
+// limit, as the API's full-history responses can legitimately be large. Use it
+// to bound memory where a failed call is preferable to an unbounded one.
+func WithMaxResponseBytes(limit int64) Option {
+	return func(c *Client) error {
+		if limit < 0 {
+			return &InputError{"max response bytes", "must not be negative"}
+		}
+		c.maxBytes = limit
 		return nil
 	}
 }

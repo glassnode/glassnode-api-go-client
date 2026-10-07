@@ -150,3 +150,69 @@ func TestAPIErrorDetailRedactedBeforeTruncation(t *testing.T) {
 		t.Fatalf("bad bounded detail: %v", err)
 	}
 }
+
+func TestInterruptedBodyIsRetried(t *testing.T) {
+	var attempts atomic.Int32
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			// Announce more bytes than are sent, so the client sees an
+			// unexpected EOF while decoding.
+			w.Header().Set("Content-Length", "100")
+			fmt.Fprint(w, `[{"t":1,"v":1},`)
+			return
+		}
+		fmt.Fprint(w, `[{"t":1,"v":1},{"t":2,"v":2}]`)
+	}, WithRetryPolicy(RetryPolicy{2, time.Millisecond, 5 * time.Millisecond}))
+	points, err := client.GetTimeSeries(context.Background(), "market/price", nil)
+	if err != nil || len(points) != 2 || attempts.Load() != 2 {
+		t.Fatalf("points=%v err=%v attempts=%d", points, err, attempts.Load())
+	}
+}
+
+func TestInvalidJSONIsNotRetried(t *testing.T) {
+	var attempts atomic.Int32
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		fmt.Fprint(w, `[{"t":1,"v":1} oops`)
+	}, WithRetryPolicy(RetryPolicy{2, time.Millisecond, 5 * time.Millisecond}))
+	_, err := client.GetTimeSeries(context.Background(), "market/price", nil)
+	var decodeErr *DecodeError
+	if !errors.As(err, &decodeErr) || attempts.Load() != 1 {
+		t.Fatalf("err=%v attempts=%d", err, attempts.Load())
+	}
+}
+
+func TestMaxResponseBytes(t *testing.T) {
+	body := `[{"t":1,"v":1},{"t":2,"v":2}]`
+	var attempts atomic.Int32
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		fmt.Fprint(w, body)
+	}, WithRetryPolicy(RetryPolicy{2, time.Millisecond, 5 * time.Millisecond}), WithMaxResponseBytes(int64(len(body))-1))
+	if _, err := client.GetTimeSeries(context.Background(), "market/price", nil); !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("Get: %v", err)
+	}
+	if _, err := client.Raw(context.Background(), "/v1/test", nil); !errors.Is(err, ErrResponseTooLarge) {
+		t.Fatalf("Raw: %v", err)
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("retried a too-large response: attempts=%d", attempts.Load())
+	}
+	exact, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) }, WithMaxResponseBytes(int64(len(body))))
+	if got, err := exact.Raw(context.Background(), "/v1/test", nil); err != nil || string(got) != body {
+		t.Fatalf("exact limit: %s %v", got, err)
+	}
+	if _, err := NewClient("key", WithMaxResponseBytes(-1)); err == nil {
+		t.Fatal("accepted negative limit")
+	}
+}
+
+func TestDefaultRetryCoversRateLimitWindow(t *testing.T) {
+	client, err := NewClient("key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.retry.MaxDelay < 60*time.Second {
+		t.Fatalf("default MaxDelay %v does not cover x-rate-limit-reset of up to 60s", client.retry.MaxDelay)
+	}
+}

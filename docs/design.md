@@ -85,6 +85,10 @@ zero and an upper bound that starts at `BaseDelay` and doubles with each retry,
 up to `MaxDelay`. Jitter keeps many clients
 from retrying at the same moment after an outage.
 
+The default cap is 65 seconds because the API's rate limit works in one-minute
+windows: a 429 at the start of a window asks for a wait of up to 60 seconds,
+and a 30-second cap would have returned the error without retrying at all.
+
 `Retry-After` (seconds or an HTTP date) is treated as a minimum delay. The API
 reports rate limits per minute through `x-rate-limit-reset`, so a `429` without
 `Retry-After` uses that header instead; retrying a rate-limited request after
@@ -112,6 +116,10 @@ retries.
 
 - OAuth login flows and token storage.
 - [x402](https://www.x402.org) payments, which the TypeScript client supports.
+- Response size limits by default. Public API clients such as go-github,
+  stripe-go and slack-go do not impose one, because the server decides how
+  much a request returns. Responses are decoded as they stream in, and
+  `WithMaxResponseBytes` is available for callers that want a hard bound.
 - Response caching and client-side rate limiting. Applications that need them
   can add them in a custom `http.RoundTripper` or around the client.
 - Reading configuration from the environment or files.

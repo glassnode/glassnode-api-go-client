@@ -1,7 +1,6 @@
 package glassnode
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,7 +28,16 @@ type Client struct {
 	retry       RetryPolicy
 	userAgent   string
 	timeout     *time.Duration
+	maxBytes    int64
 }
+
+// defaultMaxDelay covers the API's one-minute rate-limit window, so a 429 at
+// the start of a window is still retried once the window resets.
+const defaultMaxDelay = 65 * time.Second
+
+// ErrResponseTooLarge reports a response body above the WithMaxResponseBytes
+// limit. The call is not retried.
+var ErrResponseTooLarge = errors.New("response exceeds the configured size limit")
 
 // NewClient constructs a client with header API-key authentication, a one-minute
 // timeout per attempt and two GET retries. Configure exactly one of an API key,
@@ -39,7 +47,7 @@ func NewClient(apiKey string, options ...Option) (*Client, error) {
 	c := &Client{
 		baseURL: DefaultBaseURL, apiKey: apiKey,
 		httpClient: &http.Client{Timeout: time.Minute},
-		retry:      RetryPolicy{MaxRetries: 2, BaseDelay: time.Second, MaxDelay: 30 * time.Second},
+		retry:      RetryPolicy{MaxRetries: 2, BaseDelay: time.Second, MaxDelay: defaultMaxDelay},
 		userAgent:  "glassnode-api-go-client",
 	}
 	for _, option := range options {
@@ -139,57 +147,68 @@ func (c *Client) buildURL(endpoint string, params url.Values) (*url.URL, error) 
 // escape hatch for new endpoints; it does not decode or validate response JSON.
 // Query maps are copied and reserved authentication parameters are rejected.
 func (c *Client) Raw(ctx context.Context, endpoint string, params url.Values) ([]byte, error) {
-	body, _, err := c.raw(ctx, endpoint, params)
-	return body, err
+	var body []byte
+	_, err := c.do(ctx, endpoint, params, func(reader io.Reader) error {
+		var err error
+		body, err = io.ReadAll(reader)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
-func (c *Client) raw(ctx context.Context, endpoint string, params url.Values) ([]byte, *redactor, error) {
+// do sends a GET request with retries and passes each successful response
+// body to consume. A read error inside consume is retried like any other
+// transport failure; consume must therefore tolerate being called again.
+func (c *Client) do(ctx context.Context, endpoint string, params url.Values, consume func(io.Reader) error) (*redactor, error) {
 	r := &redactor{secrets: []string{c.apiKey, c.bearerToken}}
 	u, err := c.buildURL(endpoint, params)
 	if err != nil {
-		return nil, r, err
+		return r, err
 	}
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return nil, r, err
+			return r, err
 		}
-		body, err := c.send(ctx, endpoint, u, r)
+		err := c.send(ctx, endpoint, u, r, consume)
 		if err == nil {
-			return body, r, nil
+			return r, nil
 		}
 		if ctx.Err() != nil {
-			return nil, r, ctx.Err()
+			return r, ctx.Err()
 		}
 		var authErr *AuthError
-		if errors.As(err, &authErr) {
-			return nil, r, err
+		if errors.As(err, &authErr) || errors.Is(err, ErrResponseTooLarge) {
+			return r, err
 		}
 		if attempt >= c.retry.MaxRetries {
-			return nil, r, err
+			return r, err
 		}
 		var apiErr *APIError
 		var transportErr *TransportError
 		if errors.As(err, &apiErr) {
 			if !apiErr.Retryable() {
-				return nil, r, err
+				return r, err
 			}
 		} else if !errors.As(err, &transportErr) {
-			return nil, r, err
+			return r, err
 		}
 		delay := c.retryDelay(attempt)
 		if apiErr != nil {
 			if apiErr.RetryAfter > c.retry.MaxDelay {
-				return nil, r, err
+				return r, err
 			}
 			delay = max(delay, apiErr.RetryAfter)
 		}
 		if err := wait(ctx, delay); err != nil {
-			return nil, r, err
+			return r, err
 		}
 	}
 }
 
-func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redactor) ([]byte, error) {
+func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redactor, consume func(io.Reader) error) error {
 	token := c.bearerToken
 	if c.tokenSource != nil {
 		var err error
@@ -198,15 +217,15 @@ func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redac
 			r.secrets = append(r.secrets, token)
 		}
 		if err != nil {
-			return nil, &AuthError{r.safe(err)}
+			return &AuthError{r.safe(err)}
 		}
 		if !validBearerToken(token) {
-			return nil, &AuthError{errors.New("token source returned an empty or whitespace-containing bearer token")}
+			return &AuthError{errors.New("token source returned an empty or whitespace-containing bearer token")}
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, &TransportError{endpoint, r.safe(err)}
+		return &TransportError{endpoint, r.safe(err)}
 	}
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", "application/json")
@@ -217,7 +236,7 @@ func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redac
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, &TransportError{endpoint, r.safe(err)}
+		return &TransportError{endpoint, r.safe(err)}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -228,13 +247,44 @@ func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redac
 		if len(detail) > 300 {
 			detail = append(detail[:300], []rune("...")...)
 		}
-		return nil, &APIError{resp.StatusCode, endpoint, string(detail), serverDelay(resp)}
+		return &APIError{resp.StatusCode, endpoint, string(detail), serverDelay(resp)}
 	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, &TransportError{endpoint, r.safe(err)}
+	reader := &bodyReader{reader: resp.Body, remaining: c.maxBytes, limited: c.maxBytes > 0}
+	if err := consume(reader); err != nil {
+		if reader.err != nil {
+			// The body failed before consume could judge its content.
+			return &TransportError{endpoint, r.safe(reader.err)}
+		}
+		return &DecodeError{endpoint, r.safe(err)}
 	}
-	return body, nil
+	return nil
+}
+
+// bodyReader separates transport failures from the errors of whatever
+// consumes the body, and enforces the optional response size limit.
+type bodyReader struct {
+	reader    io.Reader
+	remaining int64
+	limited   bool
+	err       error
+}
+
+func (b *bodyReader) Read(p []byte) (int, error) {
+	if b.limited {
+		if b.remaining <= 0 {
+			b.err = ErrResponseTooLarge
+			return 0, b.err
+		}
+		if int64(len(p)) > b.remaining {
+			p = p[:b.remaining]
+		}
+	}
+	n, err := b.reader.Read(p)
+	b.remaining -= int64(n)
+	if err != nil && err != io.EOF {
+		b.err = err
+	}
+	return n, err
 }
 
 // A redactor belongs to one call, retaining tokens across retries without
@@ -351,24 +401,27 @@ func wait(ctx context.Context, delay time.Duration) error {
 // Get decodes a GET response into dst. Use a non-nil pointer (including
 // *json.RawMessage). Dynamic values decode as json.Number rather than float64.
 // Custom UnmarshalJSON methods allow application-specific validation.
+//
+// The body is decoded as it streams in, so only the decoded value is held in
+// memory. A read failure during decoding is retried, and dst is then decoded
+// into again with encoding/json's usual semantics for existing values.
 func (c *Client) Get(ctx context.Context, endpoint string, params url.Values, dst any) error {
 	if dst == nil || reflect.ValueOf(dst).Kind() != reflect.Pointer || reflect.ValueOf(dst).IsNil() {
 		return &InputError{"destination", "must be a non-nil pointer"}
 	}
-	body, r, err := c.raw(ctx, endpoint, params)
-	if err != nil {
-		return err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.UseNumber()
-	if err := decoder.Decode(dst); err != nil {
-		return &DecodeError{endpoint, r.safe(err)}
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		if err == nil {
-			err = errors.New("multiple JSON values")
+	_, err := c.do(ctx, endpoint, params, func(body io.Reader) error {
+		decoder := json.NewDecoder(body)
+		decoder.UseNumber()
+		if err := decoder.Decode(dst); err != nil {
+			return err
 		}
-		return &DecodeError{endpoint, r.safe(err)}
-	}
-	return nil
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			if err == nil {
+				err = errors.New("multiple JSON values")
+			}
+			return err
+		}
+		return nil
+	})
+	return err
 }

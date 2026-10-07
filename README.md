@@ -165,7 +165,8 @@ integers keep their precision.
 | --- | --- | --- |
 | Authentication | API key in the `X-Api-Key` header | `WithAPIKeyInQuery`, `WithBearerToken`, `WithTokenSource` |
 | Timeout | 1 minute per HTTP attempt | `WithTimeout` |
-| Retries | 2 retries for GET requests | `WithRetryPolicy` |
+| Retries | 2 retries, backoff capped at 65s | `WithRetryPolicy` |
+| Response size | Unlimited | `WithMaxResponseBytes` |
 | HTTP client | Fresh `http.Client` | `WithHTTPClient` |
 | Base URL | `https://api.glassnode.com` | `WithBaseURL` |
 | User agent | `glassnode-api-go-client` | `WithUserAgent` |
@@ -236,6 +237,15 @@ retry yourself when it exceeds `MaxDelay`. `WithRetryPolicy(glassnode.RetryPolic
 disables retries.
 
 The client has no cache and no rate limiter.
+
+### Large responses
+
+Responses are decoded as they arrive, so memory use is roughly the size of the
+decoded values. The API does not page results: a full history at `10m`
+resolution is hundreds of megabytes. Limit the time range with `Since` and
+`Until` where possible. To bound memory where failing is preferable to
+growing, set `WithMaxResponseBytes`; a larger response then fails with
+`ErrResponseTooLarge` and is not retried.
 
 ### Custom HTTP client
 
