@@ -90,6 +90,16 @@ func TestBaseURLPrefixAndUserAgent(t *testing.T) {
 	}
 }
 
+func TestInvalidUserAgent(t *testing.T) {
+	for _, agent := range []string{"", "  ", "app\x00", "app\tname", "app\r\nX-Injected: 1", "app\x7f"} {
+		_, err := NewClient("test-secret-key", WithUserAgent(agent))
+		var inputErr *InputError
+		if !errors.As(err, &inputErr) || inputErr.Field != "user agent" {
+			t.Errorf("WithUserAgent(%q): got %v, want user agent InputError", agent, err)
+		}
+	}
+}
+
 type rejectingDecoder struct{ cause error }
 
 func (d *rejectingDecoder) UnmarshalJSON([]byte) error { return d.cause }

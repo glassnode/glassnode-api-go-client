@@ -367,13 +367,10 @@ func TestRetryAfterMinimumWait(t *testing.T) {
 
 func TestCredentialRedactionVariants(t *testing.T) {
 	secret := `secret"with spaces&chars`
-	client, err := NewClient(secret)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := &redactor{secrets: []string{secret}}
 	encoded, _ := json.Marshal(secret)
 	for _, text := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret), string(encoded)} {
-		if got := client.redact(text); strings.Contains(got, "secret") {
+		if got := r.redact(text); strings.Contains(got, "secret") {
 			t.Errorf("failed redaction: %s", got)
 		}
 	}

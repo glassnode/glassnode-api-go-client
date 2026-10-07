@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // DefaultBaseURL is the standard Glassnode API endpoint.
@@ -92,11 +93,12 @@ func WithRetryPolicy(policy RetryPolicy) Option {
 }
 
 // WithUserAgent identifies the calling application. The SDK's default is
-// glassnode-api-go-client. An empty or multiline value is rejected.
+// glassnode-api-go-client. A blank value or one containing control characters
+// is rejected.
 func WithUserAgent(agent string) Option {
 	return func(c *Client) error {
-		if strings.TrimSpace(agent) == "" || strings.ContainsAny(agent, "\r\n") {
-			return &InputError{"user agent", "must be non-empty and contain no whitespace or control characters"}
+		if strings.TrimSpace(agent) == "" || strings.IndexFunc(agent, unicode.IsControl) >= 0 {
+			return &InputError{"user agent", "must be non-blank and contain no control characters"}
 		}
 		c.userAgent = agent
 		return nil

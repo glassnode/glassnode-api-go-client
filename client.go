@@ -230,10 +230,6 @@ func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redac
 	return body, resp.Header, nil
 }
 
-func (c *Client) redact(text string) string {
-	return (&redactor{secrets: []string{c.apiKey, c.bearerToken}}).redact(text)
-}
-
 // A redactor belongs to one call, retaining tokens across retries without
 // shared mutable state or keeping refreshed credentials on the Client.
 type redactor struct{ secrets []string }
