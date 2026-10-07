@@ -307,12 +307,14 @@ See [examples/README.md](examples/README.md) for the full list.
 
 ```sh
 go test -race ./...
-go vet ./...
-(cd examples && go vet ./... && go build ./...)
+golangci-lint run ./...
+(cd examples && go build ./... && golangci-lint run ./...)
 ```
 
 Tests run against local HTTP servers and recorded API responses, so they need
-no API key. Design decisions are described in [docs/design.md](docs/design.md).
+no API key. CI runs the same checks on the oldest supported and the latest Go
+release, plus `govulncheck`. Releases are tagged `vX.Y.Z`; the tag's section
+in [CHANGELOG.md](CHANGELOG.md) becomes the GitHub release notes. Design decisions are described in [docs/design.md](docs/design.md).
 
 ## License
 

@@ -151,4 +151,4 @@ The module root is the library. Releases are Git tags such as `v0.1.0`.
 `examples/` is a separate Go module with its own `go.mod`. Go leaves nested
 modules out of the module archive, so users who install the client do not
 download the examples. The examples module uses a relative `replace` directive
-to build against the local checkout. CI vets and builds it separately.
+to build against the local checkout. CI lints and builds it separately.
