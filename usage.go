@@ -17,6 +17,7 @@ type APIUsage struct {
 	APIAddons   []APIAddon `json:"apiAddons"`
 }
 
+// UnmarshalJSON requires creditsUsed and tolerates missing add-ons.
 func (u *APIUsage) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		CreditsUsed *int       `json:"creditsUsed"`

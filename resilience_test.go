@@ -74,7 +74,7 @@ func TestExplicitTimeoutIndependentOfOptionOrder(t *testing.T) {
 
 func TestBaseURLPrefixAndUserAgent(t *testing.T) {
 	for _, agent := range []string{"glassnode-api-go-client", "my-application/1.0"} {
-		client, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, server := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/proxy/v1/test" || r.Header.Get("User-Agent") != agent {
 				t.Errorf("path=%s agent=%s", r.URL.Path, r.Header.Get("User-Agent"))
 			}

@@ -148,7 +148,7 @@ func (c *Client) buildURL(endpoint string, params url.Values) (*url.URL, error) 
 // Query maps are copied and reserved authentication parameters are rejected.
 func (c *Client) Raw(ctx context.Context, endpoint string, params url.Values) ([]byte, error) {
 	var body []byte
-	_, err := c.do(ctx, endpoint, params, func(reader io.Reader) error {
+	err := c.do(ctx, endpoint, params, func(reader io.Reader) error {
 		var err error
 		body, err = io.ReadAll(reader)
 		return err
@@ -162,48 +162,48 @@ func (c *Client) Raw(ctx context.Context, endpoint string, params url.Values) ([
 // do sends a GET request with retries and passes each successful response
 // body to consume. A read error inside consume is retried like any other
 // transport failure; consume must therefore tolerate being called again.
-func (c *Client) do(ctx context.Context, endpoint string, params url.Values, consume func(io.Reader) error) (*redactor, error) {
+func (c *Client) do(ctx context.Context, endpoint string, params url.Values, consume func(io.Reader) error) error {
 	r := &redactor{secrets: []string{c.apiKey, c.bearerToken}}
 	u, err := c.buildURL(endpoint, params)
 	if err != nil {
-		return r, err
+		return err
 	}
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return r, err
+			return err
 		}
 		err := c.send(ctx, endpoint, u, r, consume)
 		if err == nil {
-			return r, nil
+			return nil
 		}
 		if ctx.Err() != nil {
-			return r, ctx.Err()
+			return ctx.Err()
 		}
 		var authErr *AuthError
 		if errors.As(err, &authErr) || errors.Is(err, ErrResponseTooLarge) {
-			return r, err
+			return err
 		}
 		if attempt >= c.retry.MaxRetries {
-			return r, err
+			return err
 		}
 		var apiErr *APIError
 		var transportErr *TransportError
 		if errors.As(err, &apiErr) {
 			if !apiErr.Retryable() {
-				return r, err
+				return err
 			}
 		} else if !errors.As(err, &transportErr) {
-			return r, err
+			return err
 		}
 		delay := c.retryDelay(attempt)
 		if apiErr != nil {
 			if apiErr.RetryAfter > c.retry.MaxDelay {
-				return r, err
+				return err
 			}
 			delay = max(delay, apiErr.RetryAfter)
 		}
 		if err := wait(ctx, delay); err != nil {
-			return r, err
+			return err
 		}
 	}
 }
@@ -238,11 +238,11 @@ func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redac
 	if err != nil {
 		return &TransportError{endpoint, r.safe(err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 		// Drain a bounded remainder so the connection can be reused on retry.
-		io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorDrain))
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorDrain))
 		detail := []rune(r.redact(apiErrorDetail(body)))
 		if len(detail) > 300 {
 			detail = append(detail[:300], []rune("...")...)
@@ -372,7 +372,7 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 		if seconds < 0 {
 			return 0, false
 		}
-		if seconds > int64((1<<63-1)/int64(time.Second)) {
+		if seconds > (1<<63-1)/int64(time.Second) {
 			return time.Duration(1<<63 - 1), true
 		}
 		return time.Duration(seconds) * time.Second, true
@@ -409,7 +409,7 @@ func (c *Client) Get(ctx context.Context, endpoint string, params url.Values, ds
 	if dst == nil || reflect.ValueOf(dst).Kind() != reflect.Pointer || reflect.ValueOf(dst).IsNil() {
 		return &InputError{"destination", "must be a non-nil pointer"}
 	}
-	_, err := c.do(ctx, endpoint, params, func(body io.Reader) error {
+	return c.do(ctx, endpoint, params, func(body io.Reader) error {
 		decoder := json.NewDecoder(body)
 		decoder.UseNumber()
 		if err := decoder.Decode(dst); err != nil {
@@ -423,5 +423,4 @@ func (c *Client) Get(ctx context.Context, endpoint string, params url.Values, ds
 		}
 		return nil
 	})
-	return err
 }

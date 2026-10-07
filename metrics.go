@@ -48,6 +48,7 @@ type ObjectTimeSeriesPoint struct {
 	ComputedAt *int64              `json:"computed_at,omitempty"`
 }
 
+// UnmarshalJSON requires the timestamp and object, tolerating new fields.
 func (p *ObjectTimeSeriesPoint) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		Timestamp  *int64              `json:"t"`
@@ -76,6 +77,7 @@ type BulkEntry struct {
 	Params  map[string]string
 }
 
+// UnmarshalJSON requires v and keeps every other field as a selector.
 func (p *BulkEntry) UnmarshalJSON(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
@@ -127,6 +129,7 @@ type BulkDataPoint struct {
 	Bulk      []BulkEntry `json:"bulk"`
 }
 
+// UnmarshalJSON requires the timestamp and bulk entries.
 func (p *BulkDataPoint) UnmarshalJSON(data []byte) error {
 	var wire struct {
 		Timestamp *int64      `json:"t"`
