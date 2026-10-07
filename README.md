@@ -1,5 +1,6 @@
 # Glassnode Go client
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/glassnode/glassnode-api-go-client.svg)](https://pkg.go.dev/github.com/glassnode/glassnode-api-go-client)
 [![CI](https://github.com/glassnode/glassnode-api-go-client/actions/workflows/ci.yml/badge.svg)](https://github.com/glassnode/glassnode-api-go-client/actions/workflows/ci.yml)
 [![Go version](https://img.shields.io/badge/go-%E2%89%A51.24-00ADD8.svg?logo=go)](go.mod)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
@@ -10,17 +11,12 @@ It has no dependencies outside the standard library.
 
 ## Installation
 
-The repository is private, so Go needs to fetch it directly from GitHub instead
-of the public module proxy. Make sure Git can authenticate to GitHub (for
-example with `gh auth setup-git`), then add the module to `GOPRIVATE` and
-install it:
-
 ```sh
-go env -w GOPRIVATE="$(go env GOPRIVATE),github.com/glassnode/glassnode-api-go-client"
 go get github.com/glassnode/glassnode-api-go-client
 ```
 
-The client requires Go 1.24 or later.
+The client requires Go 1.24 or later. Full API documentation is on
+[pkg.go.dev](https://pkg.go.dev/github.com/glassnode/glassnode-api-go-client).
 
 ## Quick start
 
@@ -315,6 +311,14 @@ Tests run against local HTTP servers and recorded API responses, so they need
 no API key. CI runs the same checks on the oldest supported and the latest Go
 release, plus `govulncheck`. Releases are tagged `vX.Y.Z`; the tag's section
 in [CHANGELOG.md](CHANGELOG.md) becomes the GitHub release notes. Design decisions are described in [docs/design.md](docs/design.md).
+
+## Contributing
+
+Bug reports and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md)
+for how to set up a development environment and what a change needs. To report
+a security issue, follow [SECURITY.md](SECURITY.md) rather than opening a
+public issue. This project follows the
+[Contributor Covenant](CODE_OF_CONDUCT.md) code of conduct.
 
 ## License
 

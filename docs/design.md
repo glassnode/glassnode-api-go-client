@@ -7,7 +7,6 @@ The client was extracted from the HTTP layer of
 [`glassnode-cli`](https://github.com/glassnode/glassnode-cli) and aligned with the
 features of the TypeScript client,
 [`glassnode-api-ts-client`](https://github.com/glassnode/glassnode-api-ts-client).
-Tracking issue: [GN-159](https://glassnode.atlassian.net/browse/GN-159).
 
 ## Goals
 

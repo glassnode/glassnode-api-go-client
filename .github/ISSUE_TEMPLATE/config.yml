@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security issue
+    url: https://github.com/glassnode/glassnode-api-go-client/security/advisories/new
+    about: Report a vulnerability privately instead of opening an issue.
+  - name: Glassnode API documentation
+    url: https://docs.glassnode.com
+    about: Questions about metrics, parameters, credits and plans are answered there; the client only transports what the API returns.
