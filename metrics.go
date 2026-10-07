@@ -8,17 +8,20 @@ import (
 )
 
 // TimeSeriesPoint is a scalar metric point. Value is nil for a gap (JSON null).
-// Timestamp is Unix seconds, not milliseconds.
+// Timestamp is Unix seconds, not milliseconds. ComputedAt is the Unix time at
+// which a point-in-time metric computed the value; it is nil for other metrics.
 type TimeSeriesPoint struct {
-	Timestamp int64    `json:"t"`
-	Value     *float64 `json:"v"`
+	Timestamp  int64    `json:"t"`
+	Value      *float64 `json:"v"`
+	ComputedAt *int64   `json:"computed_at,omitempty"`
 }
 
 // UnmarshalJSON requires the timestamp and scalar value, tolerating new fields.
 func (p *TimeSeriesPoint) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		Timestamp *int64          `json:"t"`
-		Value     json.RawMessage `json:"v"`
+		Timestamp  *int64          `json:"t"`
+		Value      json.RawMessage `json:"v"`
+		ComputedAt *int64          `json:"computed_at"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -32,20 +35,24 @@ func (p *TimeSeriesPoint) UnmarshalJSON(data []byte) error {
 	}
 	p.Timestamp = *wire.Timestamp
 	p.Value = value
+	p.ComputedAt = wire.ComputedAt
 	return nil
 }
 
 // ObjectTimeSeriesPoint is an object metric point (OHLC or a breakdown).
 // Object values are nullable; nested shapes can be decoded with GetMetric.
+// ComputedAt is set for point-in-time metrics, as in TimeSeriesPoint.
 type ObjectTimeSeriesPoint struct {
-	Timestamp int64               `json:"t"`
-	Object    map[string]*float64 `json:"o"`
+	Timestamp  int64               `json:"t"`
+	Object     map[string]*float64 `json:"o"`
+	ComputedAt *int64              `json:"computed_at,omitempty"`
 }
 
 func (p *ObjectTimeSeriesPoint) UnmarshalJSON(data []byte) error {
 	var wire struct {
-		Timestamp *int64              `json:"t"`
-		Object    map[string]*float64 `json:"o"`
+		Timestamp  *int64              `json:"t"`
+		Object     map[string]*float64 `json:"o"`
+		ComputedAt *int64              `json:"computed_at"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
@@ -55,6 +62,7 @@ func (p *ObjectTimeSeriesPoint) UnmarshalJSON(data []byte) error {
 	}
 	p.Timestamp = *wire.Timestamp
 	p.Object = wire.Object
+	p.ComputedAt = wire.ComputedAt
 	return nil
 }
 

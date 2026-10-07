@@ -9,3 +9,7 @@ The files come from the TypeScript client's
 (Apache License 2.0), recorded on 2026-09-23 with its
 `scripts/record-fixtures.mjs` and client version 0.27.0. They are unchanged,
 except that `asset-metadata.json` is cut down to its first three assets.
+
+The two `*-pit-*` files were recorded on 2026-10-05 with this client during a
+shape audit of all metrics; they cover the `computed_at` field that
+point-in-time metrics add to every point.

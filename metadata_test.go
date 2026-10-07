@@ -81,6 +81,30 @@ func TestExtractedEndpointFixtures(t *testing.T) {
 	}
 }
 
+func TestUsageWithoutAddons(t *testing.T) {
+	for _, body := range []string{`{"creditsUsed":6,"apiAddons":null}`, `{"creditsUsed":6}`} {
+		client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, body) })
+		usage, err := client.GetAPIUsage(context.Background())
+		if err != nil || usage.CreditsUsed != 6 || usage.CreditsPerMonth() != 0 || usage.APIAddons == nil {
+			t.Fatalf("%s: %+v %v", body, usage, err)
+		}
+	}
+}
+
+func TestTimeSeriesPointWithoutComputedAt(t *testing.T) {
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"t":1,"v":2},{"t":3,"v":4,"computed_at":5}]`)
+	})
+	points, err := client.GetTimeSeries(context.Background(), "market/price", nil)
+	if err != nil || points[0].ComputedAt != nil || points[1].ComputedAt == nil || *points[1].ComputedAt != 5 {
+		t.Fatalf("points %+v %v", points, err)
+	}
+	encoded, _ := json.Marshal(points[0])
+	if string(encoded) != `{"t":1,"v":2}` {
+		t.Errorf("omitempty lost: %s", encoded)
+	}
+}
+
 func TestObjectAndNullableBulk(t *testing.T) {
 	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/metrics/market/ohlc" {

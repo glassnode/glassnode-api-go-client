@@ -73,6 +73,13 @@ func NewClient(apiKey string, options ...Option) (*Client, error) {
 	return c, nil
 }
 
+// Error bodies are short JSON messages; anything larger is not worth keeping
+// or draining, and closing the body discards the connection instead.
+const (
+	maxErrorBody  = 4096
+	maxErrorDrain = 1 << 20
+)
+
 var endpointPattern = regexp.MustCompile(`^/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_-]+$`)
 var queryKeyPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 var credentialPattern = regexp.MustCompile(`(?i)(api_key=|X-Api-Key["\s:=]+|Bearer\s+)[^\s&"<>]+`)
@@ -214,7 +221,9 @@ func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redac
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+		// Drain a bounded remainder so the connection can be reused on retry.
+		io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorDrain))
 		detail := []rune(r.redact(apiErrorDetail(body)))
 		if len(detail) > 300 {
 			detail = append(detail[:300], []rune("...")...)

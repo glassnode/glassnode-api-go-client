@@ -96,6 +96,8 @@ Things to keep in mind:
   `market/price_usd_close`.
 - Timestamps are Unix **seconds**.
 - Missing values are `nil`, so a gap is never confused with a zero.
+- Point-in-time metrics (`*_pit`) also report when each value was computed, in
+  `ComputedAt`; for other metrics it is `nil`.
 - `params` may be `nil`. The asset list methods take an optional
   [CEL](https://cel.dev) filter expression; pass `""` for no filter.
 
