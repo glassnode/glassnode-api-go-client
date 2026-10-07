@@ -1,12 +1,19 @@
 package glassnode
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // APIError describes a non-2xx response. Detail is bounded and credential-redacted.
+// RetryAfter is how long the server asked the client to wait, taken from the
+// Retry-After header or, for 429 responses, from x-rate-limit-reset. It is zero
+// when the server gave no such hint.
 type APIError struct {
 	StatusCode int
 	Endpoint   string
 	Detail     string
+	RetryAfter time.Duration
 }
 
 func (e *APIError) Error() string {

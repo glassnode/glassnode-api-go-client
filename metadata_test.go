@@ -2,11 +2,13 @@ package glassnode
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"testing"
+	"time"
 )
 
 func TestExtractedEndpointFixtures(t *testing.T) {
@@ -50,7 +52,7 @@ func TestExtractedEndpointFixtures(t *testing.T) {
 	if err != nil || len(series) != 3 {
 		t.Fatalf("series %v %v", series, err)
 	}
-	bulk, err := client.GetBulkMetric(ctx, "market/marketcap_usd", &MetricParams{Assets: []string{"BTC", "ETH"}})
+	bulk, err := client.GetBulkMetric(ctx, "market/marketcap_usd", &MetricParams{Assets: []string{"BTC", "ETH"}, Since: time.Unix(1770076800, 0)})
 	if err != nil || len(bulk) != 31 || bulk[0].Bulk[0].Asset != "BTC" {
 		t.Fatalf("bulk %v %v", bulk, err)
 	}
@@ -69,6 +71,8 @@ func TestExtractedEndpointFixtures(t *testing.T) {
 	for _, call := range []func() ([]string, error){
 		func() ([]string, error) { return client.ListMetricTags(ctx) }, func() ([]string, error) { return client.ListAssetTags(ctx, "") },
 		func() ([]string, error) { return client.ListAssetCategories(ctx, "") }, func() ([]string, error) { return client.ListAssetBlockchains(ctx, "") },
+		func() ([]string, error) { return client.ListExchanges(ctx) }, func() ([]string, error) { return client.ListNetworks(ctx) },
+		func() ([]string, error) { return client.ListMiners(ctx) },
 	} {
 		names, err := call()
 		if err != nil || len(names) != 2 || names[0] != "one" {
@@ -89,9 +93,50 @@ func TestObjectAndNullableBulk(t *testing.T) {
 	if err != nil || len(points) != 1 || points[0].Object["c"] != nil || *points[0].Object["new"] != 15 {
 		t.Fatalf("object %v %v", points, err)
 	}
-	bulk, err := client.GetBulkMetric(context.Background(), "market/price", nil)
+	bulk, err := client.GetBulkMetric(context.Background(), "market/price", &MetricParams{Since: time.Unix(1, 0)})
 	if err != nil || bulk[0].Bulk[0].Value != nil || bulk[0].Bulk[1].Network != "eth" {
 		t.Fatalf("bulk %v %v", bulk, err)
+	}
+}
+
+func TestBulkEntryKeepsSelectors(t *testing.T) {
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":[{"t":1,"bulk":[
+			{"a":"BTC","e":"binance","v":12},
+			{"a":"BTC","e":"bitfinex","v":123},
+			{"a":"ETH","category":"more_10y","v":null}]}]}`)
+	})
+	bulk, err := client.GetBulkMetric(context.Background(), "distribution/balance_exchanges", &MetricParams{Since: time.Unix(1, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := bulk[0].Bulk
+	if entries[0].Params["e"] != "binance" || entries[1].Params["e"] != "bitfinex" || entries[1].Asset != "BTC" {
+		t.Errorf("exchange selectors lost: %+v", entries)
+	}
+	if entries[2].Params["category"] != "more_10y" || entries[2].Value != nil {
+		t.Errorf("category lost: %+v", entries[2])
+	}
+	encoded, err := json.Marshal(entries[0])
+	if err != nil || string(encoded) != `{"a":"BTC","e":"binance","v":12}` {
+		t.Errorf("marshal %s %v", encoded, err)
+	}
+	var missingValue BulkEntry
+	if err := json.Unmarshal([]byte(`{"a":"BTC"}`), &missingValue); err == nil {
+		t.Error("accepted bulk entry without v")
+	}
+}
+
+func TestParametersDefaultsAcceptsStrings(t *testing.T) {
+	var meta MetricMetadata
+	if err := json.Unmarshal([]byte(`{"path":"/p","parameters":{},"parameters_defaults":{"e":"aggregated","network":["eth"]}}`), &meta); err != nil {
+		t.Fatal(err)
+	}
+	if got := meta.ParametersDefaults; len(got["e"]) != 1 || got["e"][0] != "aggregated" || got["network"][0] != "eth" || meta.Path != "/p" {
+		t.Fatalf("defaults %v", meta)
+	}
+	if err := json.Unmarshal([]byte(`{"parameters":{},"parameters_defaults":{"e":1}}`), &meta); err == nil {
+		t.Error("accepted numeric default")
 	}
 }
 

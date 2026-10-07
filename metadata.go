@@ -149,3 +149,18 @@ func (c *Client) ListAssetCategories(ctx context.Context, filter string) ([]stri
 func (c *Client) ListAssetBlockchains(ctx context.Context, filter string) ([]string, error) {
 	return c.ListNames(ctx, "/v1/metadata/assets/blockchains", filter)
 }
+
+// ListExchanges lists the supported exchanges.
+func (c *Client) ListExchanges(ctx context.Context) ([]string, error) {
+	return c.ListNames(ctx, "/v1/metadata/exchanges", "")
+}
+
+// ListNetworks lists the supported networks.
+func (c *Client) ListNetworks(ctx context.Context) ([]string, error) {
+	return c.ListNames(ctx, "/v1/metadata/networks", "")
+}
+
+// ListMiners lists the supported miners.
+func (c *Client) ListMiners(ctx context.Context) ([]string, error) {
+	return c.ListNames(ctx, "/v1/metadata/miners", "")
+}

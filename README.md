@@ -86,6 +86,7 @@ Pick the method that matches the shape of the metric's response:
 | Available metric paths | `ListMetrics` |
 | Asset metadata | `ListAssets` |
 | Metric tags, asset tags, categories, blockchains | `ListMetricTags`, `ListAssetTags`, `ListAssetCategories`, `ListAssetBlockchains` |
+| Exchanges, networks, miners | `ListExchanges`, `ListNetworks`, `ListMiners` |
 | Account credit usage | `GetAPIUsage` |
 | Endpoints without a dedicated method | `Get` (decodes JSON) or `Raw` (returns bytes) |
 
@@ -100,15 +101,34 @@ Things to keep in mind:
 
 ### Bulk metrics
 
-Pass the base metric path; the client adds the `/bulk` suffix and unwraps the
-response envelope.
+[Bulk endpoints](https://docs.glassnode.com/basic-api/bulk-metrics) return a
+metric for many assets, exchanges or other selectors in one request. Pass the
+base metric path; the client adds the `/bulk` suffix and unwraps the response
+envelope.
 
 ```go
-points, err := client.GetBulkMetric(ctx, "market/marketcap_usd", &glassnode.MetricParams{
-	Assets:   []string{"BTC", "ETH"},
-	Interval: "24h",
+points, err := client.GetBulkMetric(ctx, "distribution/balance_exchanges", &glassnode.MetricParams{
+	Assets:    []string{"BTC", "ETH"},
+	Exchanges: []string{"binance", "coinbase"},
+	Since:     time.Now().AddDate(0, 0, -7),
+	Interval:  "24h",
 })
+for _, point := range points {
+	for _, entry := range point.Bulk {
+		fmt.Println(point.Timestamp, entry.Asset, entry.Params["e"], entry.Value)
+	}
+}
 ```
+
+Each entry carries the selectors that identify it in `Params` (for example
+`a`, `e`, `network`, or `category` for object metrics). Bulk requests differ
+from regular ones:
+
+- `Since` is required, and one request covers at most 10 days at `10m` and
+  `1h`, 31 days at `24h`, and 93 days at `1w` and `1month` resolution.
+- Every combination of selectors is billed like a separate request, and
+  leaving out `Assets` selects all assets. Always set the selectors you need.
+- Bulk endpoints are not available on the Light API.
 
 ### Additional parameters
 
@@ -207,7 +227,10 @@ returned immediately. The delay before retry *n* is a random duration between
 zero and `BaseDelay × 2ⁿ⁻¹`, capped at `MaxDelay` (with the defaults: up to
 1s, then up to 2s). A `Retry-After` header raises the delay to at least the
 value the server asks for; if that is longer than `MaxDelay`, the client returns
-the error instead of waiting. `WithRetryPolicy(glassnode.RetryPolicy{})`
+the error instead of waiting. When a `429` response has no `Retry-After`, the
+client uses the API's `x-rate-limit-reset` header the same way. The wait the
+server asked for is available as `APIError.RetryAfter`, so you can wait and
+retry yourself when it exceeds `MaxDelay`. `WithRetryPolicy(glassnode.RetryPolicy{})`
 disables retries.
 
 The client has no cache and no rate limiter.
@@ -242,7 +265,7 @@ case err != nil:
 
 | Error | Meaning |
 | --- | --- |
-| `*APIError` | The API responded with a non-2xx status. `Detail` holds the server's message, shortened to 300 characters. |
+| `*APIError` | The API responded with a non-2xx status. `Detail` holds the server's message, shortened to 300 characters; `RetryAfter` is the wait the server asked for, if any. |
 | `*InputError` | Invalid configuration or arguments; no request was sent. |
 | `*TransportError` | The request failed on the network or while reading the response. |
 | `*DecodeError` | The response did not match the expected type. |

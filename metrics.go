@@ -58,33 +58,59 @@ func (p *ObjectTimeSeriesPoint) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// BulkEntry is one asset's nullable scalar value, optionally scoped to a network.
+// BulkEntry is one value of a bulk response. Params holds every selector that
+// identifies the entry, such as "a", "e", "network" or, for object metrics,
+// "category". Asset and Network repeat Params["a"] and Params["network"].
 type BulkEntry struct {
-	Asset   string   `json:"a"`
-	Value   *float64 `json:"v"`
-	Network string   `json:"network,omitempty"`
+	Asset   string
+	Value   *float64
+	Network string
+	Params  map[string]string
 }
 
 func (p *BulkEntry) UnmarshalJSON(data []byte) error {
-	var wire struct {
-		Asset   string          `json:"a"`
-		Value   json.RawMessage `json:"v"`
-		Network string          `json:"network"`
-	}
-	if err := json.Unmarshal(data, &wire); err != nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
 	}
-	if wire.Asset == "" || len(wire.Value) == 0 {
-		return errors.New("bulk entry requires a and v")
+	raw, ok := fields["v"]
+	if !ok {
+		return errors.New("bulk entry requires v")
 	}
 	var value *float64
-	if err := json.Unmarshal(wire.Value, &value); err != nil {
+	if err := json.Unmarshal(raw, &value); err != nil {
 		return err
 	}
-	p.Asset = wire.Asset
-	p.Value = value
-	p.Network = wire.Network
+	params := make(map[string]string, len(fields)-1)
+	for key, raw := range fields {
+		if key == "v" {
+			continue
+		}
+		var param string
+		if err := json.Unmarshal(raw, &param); err != nil {
+			param = string(raw)
+		}
+		params[key] = param
+	}
+	*p = BulkEntry{Asset: params["a"], Value: value, Network: params["network"], Params: params}
 	return nil
+}
+
+// MarshalJSON encodes the entry in the API's wire format, with the selectors
+// next to "v".
+func (p BulkEntry) MarshalJSON() ([]byte, error) {
+	fields := make(map[string]any, len(p.Params)+3)
+	for key, param := range p.Params {
+		fields[key] = param
+	}
+	if p.Asset != "" {
+		fields["a"] = p.Asset
+	}
+	if p.Network != "" {
+		fields["network"] = p.Network
+	}
+	fields["v"] = p.Value
+	return json.Marshal(fields)
 }
 
 // BulkDataPoint groups asset values at a Unix timestamp in seconds.
@@ -143,8 +169,11 @@ func (c *Client) GetObjectTimeSeries(ctx context.Context, path string, params *M
 	return points, nil
 }
 
-// GetBulkMetric fetches values for several assets and unwraps the data envelope.
-// Pass the base metric path, without a /bulk suffix.
+// GetBulkMetric fetches the bulk variant of a metric and unwraps the data
+// envelope. Pass the base metric path, without a /bulk suffix. The API requires
+// Since and limits the time range per request (31 days at 24h resolution).
+// Each asset and selector combination is billed like a separate request, and
+// omitting Assets selects every asset, so set the selectors explicitly.
 func (c *Client) GetBulkMetric(ctx context.Context, path string, params *MetricParams) ([]BulkDataPoint, error) {
 	path, q, err := metricQuery(path, params, false)
 	if err != nil {
@@ -152,6 +181,9 @@ func (c *Client) GetBulkMetric(ctx context.Context, path string, params *MetricP
 	}
 	if strings.HasSuffix(path, "/bulk") {
 		return nil, &InputError{"metric path", "pass the base path without /bulk"}
+	}
+	if !q.Has("s") {
+		return nil, &InputError{"s", "bulk metrics require Since"}
 	}
 	endpoint := "/v1/metrics" + path + "/bulk"
 	var wire struct {

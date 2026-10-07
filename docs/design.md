@@ -53,7 +53,10 @@ credentials attached to it, at a different server.
   existing code. Required fields such as `t` and `v` are checked, and a missing
   one produces a `DecodeError` instead of a silent zero.
 - **Bulk responses are unwrapped.** `GetBulkMetric` returns the contents of the
-  `data` envelope directly.
+  `data` envelope directly. Each entry keeps all of its selectors in `Params`,
+  because they depend on the metric (`e`, `network`, `category`, ...) and are
+  the only way to tell entries apart. Bulk requests without `Since` are
+  rejected before sending, since the API requires it.
 
 ## Authentication
 
@@ -82,9 +85,12 @@ zero and an upper bound that starts at `BaseDelay` and doubles with each retry,
 up to `MaxDelay`. Jitter keeps many clients
 from retrying at the same moment after an outage.
 
-`Retry-After` (seconds or an HTTP date) is treated as a minimum delay. If it
-exceeds `MaxDelay`, the client returns the error rather than retrying early or
-blocking for longer than the caller configured.
+`Retry-After` (seconds or an HTTP date) is treated as a minimum delay. The API
+reports rate limits per minute through `x-rate-limit-reset`, so a `429` without
+`Retry-After` uses that header instead; retrying a rate-limited request after
+a second would only fail again. If the delay exceeds `MaxDelay`, the client
+returns the error rather than retrying early or blocking for longer than the
+caller configured. The delay is exposed as `APIError.RetryAfter`.
 
 The per-attempt timeout comes from the HTTP client. The total duration of a
 call is controlled by the context, which also interrupts the waits between
@@ -127,8 +133,8 @@ retries.
 | OAuth token refresh | `WithTokenSource` |
 | x402 payments | Not supported |
 
-`GetAPIUsage` and the generic `ListNames` come from `glassnode-cli` and have
-no TypeScript counterpart.
+`GetAPIUsage`, `ListExchanges`, `ListNetworks`, `ListMiners` and the generic
+`ListNames` have no TypeScript counterpart.
 
 ## Packaging
 

@@ -134,6 +134,9 @@ func TestInputRejectedBeforeRequest(t *testing.T) {
 	if _, err := client.GetBulkMetric(context.Background(), "market/price/bulk", nil); err == nil {
 		t.Error("accepted bulk suffix")
 	}
+	if _, err := client.GetBulkMetric(context.Background(), "market/price", &MetricParams{Assets: []string{"BTC"}}); err == nil {
+		t.Error("accepted bulk request without Since")
+	}
 	if _, err := client.GetMetricMetadata(context.Background(), "market/price", &MetricParams{Extra: url.Values{"path": {"/other"}}}); err == nil {
 		t.Error("accepted reserved path")
 	}
@@ -195,6 +198,34 @@ func TestRetriesAndRetryAfter(t *testing.T) {
 	}
 	if _, ok := parseRetryAfter("-1", now); ok {
 		t.Fatal("negative retry delay")
+	}
+}
+
+func TestRateLimitReset(t *testing.T) {
+	for _, tt := range []struct {
+		status       int
+		wantAttempts int32
+		wantDelay    time.Duration
+	}{
+		{429, 1, 100 * time.Second},
+		{503, 3, 0},
+	} {
+		t.Run(fmt.Sprint(tt.status), func(t *testing.T) {
+			var attempts atomic.Int32
+			client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				attempts.Add(1)
+				w.Header().Set("X-Rate-Limit-Reset", "100")
+				w.WriteHeader(tt.status)
+			}, WithRetryPolicy(RetryPolicy{2, time.Millisecond, time.Second}))
+			_, err := client.Raw(context.Background(), "/v1/test", nil)
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) || apiErr.RetryAfter != tt.wantDelay {
+				t.Fatalf("error %#v", err)
+			}
+			if attempts.Load() != tt.wantAttempts {
+				t.Errorf("attempts=%d want %d", attempts.Load(), tt.wantAttempts)
+			}
+		})
 	}
 }
 
@@ -277,7 +308,7 @@ func TestConcurrentClientAndQueryIsolation(t *testing.T) {
 		}
 		fmt.Fprint(w, `{"data":[]}`)
 	})
-	params := &MetricParams{Assets: []string{"BTC", "ETH"}, Extra: url.Values{"network": {"eth", "sol"}}}
+	params := &MetricParams{Assets: []string{"BTC", "ETH"}, Since: time.Unix(1700000000, 0), Extra: url.Values{"network": {"eth", "sol"}}}
 	var group sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		group.Add(1)

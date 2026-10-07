@@ -146,7 +146,7 @@ func (c *Client) raw(ctx context.Context, endpoint string, params url.Values) ([
 		if err := ctx.Err(); err != nil {
 			return nil, r, err
 		}
-		body, header, err := c.send(ctx, endpoint, u, r)
+		body, err := c.send(ctx, endpoint, u, r)
 		if err == nil {
 			return body, r, nil
 		}
@@ -170,13 +170,11 @@ func (c *Client) raw(ctx context.Context, endpoint string, params url.Values) ([
 			return nil, r, err
 		}
 		delay := c.retryDelay(attempt)
-		if retryAfter, ok := parseRetryAfter(header.Get("Retry-After"), time.Now()); ok {
-			if retryAfter > c.retry.MaxDelay {
+		if apiErr != nil {
+			if apiErr.RetryAfter > c.retry.MaxDelay {
 				return nil, r, err
 			}
-			if retryAfter > delay {
-				delay = retryAfter
-			}
+			delay = max(delay, apiErr.RetryAfter)
 		}
 		if err := wait(ctx, delay); err != nil {
 			return nil, r, err
@@ -184,7 +182,7 @@ func (c *Client) raw(ctx context.Context, endpoint string, params url.Values) ([
 	}
 }
 
-func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redactor) ([]byte, http.Header, error) {
+func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redactor) ([]byte, error) {
 	token := c.bearerToken
 	if c.tokenSource != nil {
 		var err error
@@ -193,15 +191,15 @@ func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redac
 			r.secrets = append(r.secrets, token)
 		}
 		if err != nil {
-			return nil, nil, &AuthError{r.safe(err)}
+			return nil, &AuthError{r.safe(err)}
 		}
 		if !validBearerToken(token) {
-			return nil, nil, &AuthError{errors.New("token source returned an empty or whitespace-containing bearer token")}
+			return nil, &AuthError{errors.New("token source returned an empty or whitespace-containing bearer token")}
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, nil, &TransportError{endpoint, r.safe(err)}
+		return nil, &TransportError{endpoint, r.safe(err)}
 	}
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", "application/json")
@@ -212,7 +210,7 @@ func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redac
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, nil, &TransportError{endpoint, r.safe(err)}
+		return nil, &TransportError{endpoint, r.safe(err)}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -221,13 +219,13 @@ func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redac
 		if len(detail) > 300 {
 			detail = append(detail[:300], []rune("...")...)
 		}
-		return nil, resp.Header, &APIError{resp.StatusCode, endpoint, string(detail)}
+		return nil, &APIError{resp.StatusCode, endpoint, string(detail), serverDelay(resp)}
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, resp.Header, &TransportError{endpoint, r.safe(err)}
+		return nil, &TransportError{endpoint, r.safe(err)}
 	}
-	return body, resp.Header, nil
+	return body, nil
 }
 
 // A redactor belongs to one call, retaining tokens across retries without
@@ -292,6 +290,22 @@ func (c *Client) retryDelay(attempt int) time.Duration {
 		return 0
 	}
 	return time.Duration(rand.Int64N(int64(upper)))
+}
+
+// serverDelay returns the wait requested by a response. The API reports rate
+// limits through x-rate-limit-reset, the seconds until the window resets, and
+// may not send Retry-After.
+func serverDelay(resp *http.Response) time.Duration {
+	now := time.Now()
+	if delay, ok := parseRetryAfter(resp.Header.Get("Retry-After"), now); ok {
+		return delay
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		if delay, ok := parseRetryAfter(resp.Header.Get("X-Rate-Limit-Reset"), now); ok {
+			return delay
+		}
+	}
+	return 0
 }
 
 func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {

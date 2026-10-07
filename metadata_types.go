@@ -1,5 +1,10 @@
 package glassnode
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // Asset describes a supported blockchain asset or token.
 type Asset struct {
 	ID             string            `json:"id"`
@@ -51,6 +56,37 @@ type MetricMetadata struct {
 	TimeRange          *TimeRange          `json:"timerange,omitempty"`
 	Modified           int64               `json:"modified,omitempty"`
 	Descriptors        *MetricDescriptors  `json:"descriptors,omitempty"`
+}
+
+// UnmarshalJSON accepts each parameters_defaults value either as a list, as the
+// API currently returns it, or as a single string, as the API documentation
+// describes it.
+func (m *MetricMetadata) UnmarshalJSON(data []byte) error {
+	type plain MetricMetadata
+	var wire struct {
+		*plain
+		ParametersDefaults map[string]json.RawMessage `json:"parameters_defaults"`
+	}
+	wire.plain = (*plain)(m)
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	m.ParametersDefaults = nil
+	for key, raw := range wire.ParametersDefaults {
+		var values []string
+		if err := json.Unmarshal(raw, &values); err != nil {
+			var value string
+			if err := json.Unmarshal(raw, &value); err != nil {
+				return fmt.Errorf("parameters_defaults %q: expected a string or a list of strings", key)
+			}
+			values = []string{value}
+		}
+		if m.ParametersDefaults == nil {
+			m.ParametersDefaults = make(map[string][]string, len(wire.ParametersDefaults))
+		}
+		m.ParametersDefaults[key] = values
+	}
+	return nil
 }
 
 // MetricVariant links the base, bulk and point-in-time metric paths.

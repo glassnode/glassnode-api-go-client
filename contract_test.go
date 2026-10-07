@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestRecordedAPIContracts(t *testing.T) {
@@ -53,8 +54,14 @@ func TestRecordedAPIContracts(t *testing.T) {
 			return err
 		}},
 		{"bulk-marketcap-usd.json", func(c *Client) error {
-			_, err := c.GetBulkMetric(context.Background(), "market/marketcap_usd", nil)
-			return err
+			bulk, err := c.GetBulkMetric(context.Background(), "market/marketcap_usd", &MetricParams{Since: time.Unix(1735689600, 0)})
+			if err != nil {
+				return err
+			}
+			if eth := bulk[0].Bulk[1]; eth.Asset != "ETH" || eth.Network != "eth" || eth.Params["network"] != "eth" {
+				return fmt.Errorf("lost recorded bulk selectors: %+v", eth)
+			}
+			return nil
 		}},
 	} {
 		t.Run(tt.file, func(t *testing.T) {
