@@ -77,6 +77,7 @@ Pick the method that matches the shape of the metric's response:
 | Object metric (OHLC, breakdowns), `{"t", "o"}` | `GetObjectTimeSeries` |
 | Several assets in one request | `GetBulkMetric` |
 | Any other shape | `GetMetric` with your own destination type |
+| A metric as CSV, written to an `io.Writer` | `GetMetricCSV` |
 | Metric metadata, variants and availability | `GetMetricMetadata` |
 | Data lag percentiles | `GetMetricStats` |
 | Available metric paths | `ListMetrics` |
@@ -113,13 +114,15 @@ points, err := client.GetBulkMetric(ctx, "distribution/balance_exchanges", &glas
 })
 for _, point := range points {
 	for _, entry := range point.Bulk {
-		fmt.Println(point.Timestamp, entry.Asset, entry.Params["e"], entry.Value)
+		fmt.Println(point.Timestamp, entry.Asset(), entry.Params["e"], entry.Value)
 	}
 }
 ```
 
 Each entry carries the selectors that identify it in `Params` (for example
-`a`, `e`, `network`, or `category` for object metrics). Bulk requests differ
+`a`, `e`, `network`, or `category` for object metrics). Selector values are
+strings; a value of another JSON type, should the API ever send one, is kept as
+its JSON text and written back as a string by `json.Marshal`. Bulk requests differ
 from regular ones:
 
 - `Since` is required, and one request covers at most 10 days at `10m` and
@@ -144,6 +147,30 @@ params := &glassnode.MetricParams{
 
 Set each parameter in one place only: setting it both in a typed field and in
 `Extra` is an error.
+
+### CSV downloads
+
+`GetMetricCSV` asks the API for CSV and copies the response to a writer as it
+arrives, so a file of any size can be downloaded without holding it in memory:
+
+```go
+file, err := os.Create("price.csv")
+if err != nil {
+	return err
+}
+defer file.Close()
+err = client.GetMetricCSV(ctx, "market/price_usd_close", &glassnode.MetricParams{
+	Asset:    "BTC",
+	Since:    time.Now().AddDate(0, -1, 0),
+	Interval: "24h",
+}, file)
+```
+
+The columns are the API's (`timestamp,value`, the object keys for object
+metrics, `computed_at` for point-in-time metrics). Bulk metrics are not
+available in CSV. A failure before the body starts is retried like any other
+request; a failure while copying is not, since part of the file has been
+written.
 
 ### Custom response types
 
@@ -211,14 +238,20 @@ client, err := glassnode.NewClient("", glassnode.WithTokenSource(source))
 
 Configure exactly one way to authenticate; `NewClient` returns an error
 otherwise. A failing token source produces an `AuthError` and is not retried.
-A `401` response is returned as is: the client does not refresh the token and
-try again.
+A `401` response is returned as is, unless the token source also implements
+`TokenRefresher`: then `Refresh` is called once and the request is repeated
+with the new token, so an application can recover from a token revoked before
+its expiry.
 
 ### Timeouts and retries
 
-The timeout applies to each HTTP attempt separately. To limit the total time of
-a call, including retries and the waits between them, use a context deadline.
-`WithTimeout(0)` removes the per-attempt timeout.
+The timeout applies to each HTTP attempt separately and covers the whole
+exchange, including reading the response body. A large response over a slow
+link, such as a full history with `GetMetricCSV` or a long `Get`, can exceed
+the default minute; raise it with `WithTimeout` or remove it with
+`WithTimeout(0)` and bound the call with a context deadline instead. A context
+deadline limits the total time of a call, including retries and the waits
+between them.
 
 GET requests are retried after network errors and `429` or `5xx` responses.
 Other errors, including `4xx` responses and responses that fail to decode, are
@@ -236,12 +269,12 @@ The client has no cache and no rate limiter.
 
 ### Large responses
 
-Responses are decoded as they arrive, so memory use is roughly the size of the
-decoded values. The API does not page results: a full history at `10m`
-resolution is hundreds of megabytes. Limit the time range with `Since` and
-`Until` where possible. To bound memory where failing is preferable to
-growing, set `WithMaxResponseBytes`; a larger response then fails with
-`ErrResponseTooLarge` and is not retried.
+A response is read completely before it is decoded, so a call holds the
+response body and the decoded values in memory at the same time. The API does
+not page results: a full history at `10m` resolution is hundreds of megabytes.
+Limit the time range with `Since` and `Until` where possible. To bound memory
+where failing is preferable to growing, set `WithMaxResponseBytes`; a larger
+response then fails with a `*ResponseTooLargeError` and is not retried.
 
 ### Custom HTTP client
 
@@ -252,6 +285,11 @@ over the supplied client's timeout.
 
 Redirects are never followed, even with a custom client, so credentials are
 never sent to another host. A `3xx` response is returned as an `APIError`.
+
+If the supplied client already retries, for example one built with
+`go-retryablehttp`, disable the client's own retries with
+`WithRetryPolicy(glassnode.RetryPolicy{})`; otherwise both layers retry and a
+failing request can take many times longer than either policy intends.
 
 ## Error handling
 
@@ -278,6 +316,7 @@ case err != nil:
 | `*TransportError` | The request failed on the network or while reading the response. |
 | `*DecodeError` | The response did not match the expected type. |
 | `*AuthError` | The token source failed or returned an invalid token. |
+| `*ResponseTooLargeError` | The response exceeded `WithMaxResponseBytes`; also matches `errors.Is(err, ErrResponseTooLarge)`. |
 
 Context cancellation and deadlines are returned as `context.Canceled` and
 `context.DeadlineExceeded`.

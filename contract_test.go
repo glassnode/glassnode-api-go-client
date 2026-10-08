@@ -78,7 +78,7 @@ func TestRecordedAPIContracts(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if eth := bulk[0].Bulk[1]; eth.Asset != "ETH" || eth.Network != "eth" || eth.Params["network"] != "eth" {
+			if eth := bulk[0].Bulk[1]; eth.Asset() != "ETH" || eth.Network() != "eth" || eth.Params["network"] != "eth" {
 				return fmt.Errorf("lost recorded bulk selectors: %+v", eth)
 			}
 			return nil

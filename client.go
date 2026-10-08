@@ -1,17 +1,21 @@
 package glassnode
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	"io"
 	"math/rand/v2"
+	"mime"
 	"net/http"
 	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -29,15 +33,38 @@ type Client struct {
 	userAgent   string
 	timeout     *time.Duration
 	maxBytes    int64
+	refresh     *refreshState
+}
+
+// refreshState merges concurrent token refreshes: calls that were rejected
+// with the same token share one Refresh instead of each asking the
+// authorization server, which may rotate refresh tokens and invalidate the
+// others' results.
+type refreshState struct {
+	mu          sync.Mutex
+	rejected    string
+	replacement string
+}
+
+// refreshToken returns a replacement for a token the API rejected, calling
+// the TokenRefresher only if no other call has replaced that token yet.
+func (c *Client) refreshToken(ctx context.Context, refresher TokenRefresher, rejected string) (string, error) {
+	c.refresh.mu.Lock()
+	defer c.refresh.mu.Unlock()
+	if c.refresh.rejected == rejected && c.refresh.replacement != "" {
+		return c.refresh.replacement, nil
+	}
+	fresh, err := refresher.Refresh(ctx)
+	if err != nil {
+		return fresh, err
+	}
+	c.refresh.rejected, c.refresh.replacement = rejected, fresh
+	return fresh, nil
 }
 
 // defaultMaxDelay covers the API's one-minute rate-limit window, so a 429 at
 // the start of a window is still retried once the window resets.
 const defaultMaxDelay = 65 * time.Second
-
-// ErrResponseTooLarge reports a response body above the WithMaxResponseBytes
-// limit. The call is not retried.
-var ErrResponseTooLarge = errors.New("response exceeds the configured size limit")
 
 // NewClient constructs a client with header API-key authentication, a one-minute
 // timeout per attempt and two GET retries. Configure exactly one of an API key,
@@ -49,6 +76,7 @@ func NewClient(apiKey string, options ...Option) (*Client, error) {
 		httpClient: &http.Client{Timeout: time.Minute},
 		retry:      RetryPolicy{MaxRetries: 2, BaseDelay: time.Second, MaxDelay: defaultMaxDelay},
 		userAgent:  "glassnode-api-go-client",
+		refresh:    &refreshState{},
 	}
 	for _, option := range options {
 		if option == nil {
@@ -116,8 +144,8 @@ func cloneQuery(params url.Values) (url.Values, error) {
 				return nil, &InputError{k, "must not contain an empty value"}
 			}
 		}
-		if k == "f" && (len(values) != 1 || !strings.EqualFold(values[0], "json")) {
-			return nil, &InputError{"f", "only JSON is supported"}
+		if k == "f" && (len(values) != 1 || !strings.EqualFold(values[0], "json") && !strings.EqualFold(values[0], "csv")) {
+			return nil, &InputError{"f", "only json and csv are supported"}
 		}
 		q[k] = append([]string(nil), values...)
 	}
@@ -147,88 +175,149 @@ func (c *Client) buildURL(endpoint string, params url.Values) (*url.URL, error) 
 // escape hatch for new endpoints; it does not decode or validate response JSON.
 // Query maps are copied and reserved authentication parameters are rejected.
 func (c *Client) Raw(ctx context.Context, endpoint string, params url.Values) ([]byte, error) {
-	var body []byte
-	err := c.do(ctx, endpoint, params, func(reader io.Reader) error {
-		var err error
-		body, err = io.ReadAll(reader)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return body, nil
+	body, _, err := c.do(ctx, endpoint, params)
+	return body, err
 }
 
-// do sends a GET request with retries and passes each successful response
-// body to consume. A read error inside consume is retried like any other
-// transport failure; consume must therefore tolerate being called again.
-func (c *Client) do(ctx context.Context, endpoint string, params url.Values, consume func(io.Reader) error) error {
+// do sends a GET request with retries and returns the body of the first
+// successful attempt. Nothing is decoded here, so a failed attempt leaves no
+// trace in the caller's values.
+func (c *Client) do(ctx context.Context, endpoint string, params url.Values) ([]byte, *redactor, error) {
+	var body []byte
+	r, err := c.doWith(ctx, endpoint, params, func(resp *http.Response) error {
+		data, tooLarge, err := readBody(resp.Body, c.maxBytes)
+		if err != nil {
+			return &TransportError{endpoint, err}
+		}
+		if tooLarge {
+			return &ResponseTooLargeError{endpoint, c.maxBytes}
+		}
+		body = data
+		return nil
+	})
+	return body, r, err
+}
+
+// doWith sends a GET request with retries and hands each 2xx response to
+// consume. consume returns the error to report: a TransportError is retried
+// unless it wraps a deliveredError, which marks output already handed to the
+// caller that a retry would duplicate.
+func (c *Client) doWith(ctx context.Context, endpoint string, params url.Values, consume func(*http.Response) error) (*redactor, error) {
 	r := &redactor{secrets: []string{c.apiKey, c.bearerToken}}
 	u, err := c.buildURL(endpoint, params)
 	if err != nil {
-		return err
+		return r, err
 	}
+	var refreshed string // token obtained after a 401, used for the rest of the call
+	refreshTried := false
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return r, err
 		}
-		err := c.send(ctx, endpoint, u, r, consume)
+		token, err := c.token(ctx, r, refreshed)
+		if err != nil {
+			return r, err
+		}
+		err = c.send(ctx, endpoint, u, token, r, consume)
 		if err == nil {
-			return nil
+			return r, nil
 		}
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return r, ctx.Err()
 		}
 		var authErr *AuthError
-		if errors.As(err, &authErr) || errors.Is(err, ErrResponseTooLarge) {
-			return err
-		}
-		if attempt >= c.retry.MaxRetries {
-			return err
+		var tooLarge *ResponseTooLargeError
+		var delivered *deliveredError
+		if errors.As(err, &authErr) || errors.As(err, &tooLarge) || errors.As(err, &delivered) {
+			return r, err
 		}
 		var apiErr *APIError
 		var transportErr *TransportError
 		if errors.As(err, &apiErr) {
+			if apiErr.StatusCode == http.StatusUnauthorized && !refreshTried {
+				if refresher, ok := c.tokenSource.(TokenRefresher); ok {
+					refreshTried = true
+					fresh, rerr := c.refreshToken(ctx, refresher, token)
+					if fresh != "" {
+						r.secrets = append(r.secrets, fresh)
+					}
+					if rerr != nil {
+						return r, &AuthError{r.safe(rerr)}
+					}
+					if !validBearerToken(fresh) {
+						return r, &AuthError{errors.New("token refresher returned an empty or whitespace-containing bearer token")}
+					}
+					if fresh != token {
+						refreshed = fresh
+						attempt-- // the repeat does not count against the retry budget
+						continue
+					}
+					// The refresher has nothing newer: the API's 401 is the answer.
+				}
+			}
 			if !apiErr.Retryable() {
-				return err
+				return r, err
 			}
 		} else if !errors.As(err, &transportErr) {
-			return err
+			return r, err
+		}
+		if attempt >= c.retry.MaxRetries {
+			return r, err
 		}
 		delay := c.retryDelay(attempt)
 		if apiErr != nil {
 			if apiErr.RetryAfter > c.retry.MaxDelay {
-				return err
+				return r, err
 			}
 			delay = max(delay, apiErr.RetryAfter)
 		}
 		if err := wait(ctx, delay); err != nil {
-			return err
+			return r, err
 		}
 	}
 }
 
-func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redactor, consume func(io.Reader) error) error {
-	token := c.bearerToken
-	if c.tokenSource != nil {
-		var err error
-		token, err = c.tokenSource.Token(ctx)
-		if token != "" {
-			r.secrets = append(r.secrets, token)
-		}
-		if err != nil {
-			return &AuthError{r.safe(err)}
-		}
-		if !validBearerToken(token) {
-			return &AuthError{errors.New("token source returned an empty or whitespace-containing bearer token")}
-		}
+// token returns the bearer token for an attempt: the refreshed one if a 401
+// was answered by TokenRefresher, otherwise the source's current token. It is
+// empty for API-key authentication.
+func (c *Client) token(ctx context.Context, r *redactor, refreshed string) (string, error) {
+	if refreshed != "" {
+		return refreshed, nil
 	}
+	if c.tokenSource == nil {
+		return c.bearerToken, nil
+	}
+	token, err := c.tokenSource.Token(ctx)
+	if token != "" {
+		r.secrets = append(r.secrets, token)
+	}
+	if err != nil {
+		return "", &AuthError{r.safe(err)}
+	}
+	if !validBearerToken(token) {
+		return "", &AuthError{errors.New("token source returned an empty or whitespace-containing bearer token")}
+	}
+	return token, nil
+}
+
+// deliveredError wraps a failure that happened after part of the response was
+// already written to the caller's destination; such a call is never retried.
+type deliveredError struct{ cause error }
+
+func (e *deliveredError) Error() string { return e.cause.Error() + " (partial output was written)" }
+func (e *deliveredError) Unwrap() error { return e.cause }
+
+func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, token string, r *redactor, consume func(*http.Response) error) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return &TransportError{endpoint, r.safe(err)}
 	}
 	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", "application/json")
+	accept := "application/json"
+	if strings.EqualFold(u.Query().Get("f"), "csv") {
+		accept = "text/csv"
+	}
+	req.Header.Set("Accept", accept)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	} else if !c.queryAuth {
@@ -243,52 +332,58 @@ func (c *Client) send(ctx context.Context, endpoint string, u *url.URL, r *redac
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
 		// Drain a bounded remainder so the connection can be reused on retry.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorDrain))
-		detail := []rune(r.redact(apiErrorDetail(body)))
+		detail := []rune(r.redact(apiErrorDetail(resp.StatusCode, resp.Header.Get("Content-Type"), body)))
 		if len(detail) > 300 {
 			detail = append(detail[:300], []rune("...")...)
 		}
 		return &APIError{resp.StatusCode, endpoint, string(detail), serverDelay(resp)}
 	}
-	reader := &bodyReader{reader: resp.Body, remaining: c.maxBytes, limited: c.maxBytes > 0}
-	if err := consume(reader); err != nil {
-		if reader.err != nil {
-			// The body failed before consume could judge its content.
-			return &TransportError{endpoint, r.safe(reader.err)}
+	if err := consume(resp); err != nil {
+		var transportErr *TransportError
+		if errors.As(err, &transportErr) {
+			transportErr.Err = r.safe(transportErr.Err)
 		}
-		return &DecodeError{endpoint, r.safe(err)}
+		return err
 	}
 	return nil
 }
 
-// bodyReader separates transport failures from the errors of whatever
-// consumes the body, and enforces the optional response size limit.
-type bodyReader struct {
-	reader    io.Reader
-	remaining int64
-	limited   bool
-	err       error
+// readBody reads a response body into memory, enforcing the optional size
+// limit through copyLimited.
+func readBody(body io.Reader, limit int64) (data []byte, tooLarge bool, err error) {
+	var buf bytes.Buffer
+	if _, tooLarge, err = copyLimited(&buf, body, limit); err != nil || tooLarge {
+		return nil, tooLarge, err
+	}
+	return buf.Bytes(), false, nil
 }
 
-func (b *bodyReader) Read(p []byte) (int, error) {
-	if b.limited {
-		if b.remaining <= 0 {
-			b.err = ErrResponseTooLarge
-			return 0, b.err
-		}
-		if int64(len(p)) > b.remaining {
-			p = p[:b.remaining]
-		}
+// copyLimited copies src to dst, enforcing the optional size limit: at most
+// limit bytes reach dst, and a body of exactly limit bytes is accepted. If
+// one more byte can be read, it is not written and tooLarge is reported.
+// written counts the bytes dst received, including before an error.
+func copyLimited(dst io.Writer, src io.Reader, limit int64) (written int64, tooLarge bool, err error) {
+	if limit <= 0 {
+		written, err = io.Copy(dst, src)
+		return written, false, err
 	}
-	n, err := b.reader.Read(p)
-	b.remaining -= int64(n)
+	written, err = io.Copy(dst, io.LimitReader(src, limit))
+	if err != nil || written < limit {
+		return written, false, err
+	}
+	var probe [1]byte
+	n, err := src.Read(probe[:])
+	if n > 0 {
+		return written, true, nil
+	}
 	if err != nil && err != io.EOF {
-		b.err = err
+		return written, false, err
 	}
-	return n, err
+	return written, false, nil
 }
 
-// A redactor belongs to one call, retaining tokens across retries without
-// shared mutable state or keeping refreshed credentials on the Client.
+// A redactor belongs to one call, retaining the tokens that call used; the
+// Client itself keeps only the latest token replacement, under refreshState.
 type redactor struct{ secrets []string }
 
 func (r *redactor) redact(text string) string {
@@ -317,7 +412,23 @@ type redactedError struct {
 func (e *redactedError) Error() string { return e.message }
 func (e *redactedError) Unwrap() error { return e.cause }
 
-func apiErrorDetail(body []byte) string {
+var htmlTitlePattern = regexp.MustCompile(`(?is)<title>\s*(.*?)\s*</title>`)
+
+// apiErrorDetail extracts a human-readable message from an error body: the
+// JSON message or error field, the title of an HTML page (gateways answer 401
+// and 5xx with HTML, which must not end up in error messages) or the text.
+func apiErrorDetail(status int, contentType string, body []byte) string {
+	text := strings.TrimSpace(string(body))
+	mediaType, _, _ := mime.ParseMediaType(contentType)
+	if mediaType == "text/html" || strings.HasPrefix(text, "<") {
+		if m := htmlTitlePattern.FindStringSubmatch(text); m != nil {
+			title := strings.TrimSpace(strings.TrimPrefix(html.UnescapeString(m[1]), strconv.Itoa(status)))
+			if title != "" {
+				return title
+			}
+		}
+		return http.StatusText(status)
+	}
 	var response struct {
 		Message string `json:"message"`
 		Error   string `json:"error"`
@@ -330,7 +441,7 @@ func apiErrorDetail(body []byte) string {
 			return response.Error
 		}
 	}
-	return strings.TrimSpace(string(body))
+	return text
 }
 
 func (c *Client) retryDelay(attempt int) time.Duration {
@@ -367,13 +478,20 @@ func serverDelay(resp *http.Response) time.Duration {
 	return 0
 }
 
+// epochThreshold separates a number of seconds to wait from a Unix timestamp.
+// No server asks a client to wait a year; a larger value is a point in time.
+const epochThreshold = 365 * 24 * 60 * 60
+
+// parseRetryAfter reads a Retry-After or x-rate-limit-reset value: a number of
+// seconds, a Unix timestamp or an HTTP date. The API sends seconds; the
+// timestamp form guards against a format change silently disabling retries.
 func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	if seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
 		if seconds < 0 {
 			return 0, false
 		}
-		if seconds > (1<<63-1)/int64(time.Second) {
-			return time.Duration(1<<63 - 1), true
+		if seconds > epochThreshold {
+			return max(time.Unix(seconds, 0).Sub(now), 0), true
 		}
 		return time.Duration(seconds) * time.Second, true
 	}
@@ -402,25 +520,31 @@ func wait(ctx context.Context, delay time.Duration) error {
 // *json.RawMessage). Dynamic values decode as json.Number rather than float64.
 // Custom UnmarshalJSON methods allow application-specific validation.
 //
-// The body is decoded as it streams in, so only the decoded value is held in
-// memory. A read failure during decoding is retried, and dst is then decoded
-// into again with encoding/json's usual semantics for existing values.
+// The response is read completely, with retries, before anything is decoded,
+// so dst is written to at most once, from a successful attempt. A failed
+// request or invalid JSON leaves dst untouched; a type mismatch may leave it
+// partially filled, as json.Unmarshal does.
 func (c *Client) Get(ctx context.Context, endpoint string, params url.Values, dst any) error {
 	if dst == nil || reflect.ValueOf(dst).Kind() != reflect.Pointer || reflect.ValueOf(dst).IsNil() {
 		return &InputError{"destination", "must be a non-nil pointer"}
 	}
-	return c.do(ctx, endpoint, params, func(body io.Reader) error {
-		decoder := json.NewDecoder(body)
-		decoder.UseNumber()
-		if err := decoder.Decode(dst); err != nil {
-			return err
+	if strings.EqualFold(params.Get("f"), "csv") {
+		return &InputError{"f", "Get decodes JSON; use GetMetricCSV for CSV"}
+	}
+	body, r, err := c.do(ctx, endpoint, params)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	if err := decoder.Decode(dst); err != nil {
+		return &DecodeError{endpoint, r.safe(err)}
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		if err == nil {
+			err = errors.New("multiple JSON values")
 		}
-		if err := decoder.Decode(new(any)); err != io.EOF {
-			if err == nil {
-				err = errors.New("multiple JSON values")
-			}
-			return err
-		}
-		return nil
-	})
+		return &DecodeError{endpoint, r.safe(err)}
+	}
+	return nil
 }

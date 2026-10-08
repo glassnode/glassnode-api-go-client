@@ -106,8 +106,8 @@ func WithUserAgent(agent string) Option {
 	}
 }
 
-// WithMaxResponseBytes rejects response bodies larger than limit with
-// ErrResponseTooLarge instead of decoding them. The default, zero, is no
+// WithMaxResponseBytes rejects response bodies larger than limit with a
+// ResponseTooLargeError instead of decoding them. The default, zero, is no
 // limit, as the API's full-history responses can legitimately be large. Use it
 // to bound memory where a failed call is preferable to an unbounded one.
 func WithMaxResponseBytes(limit int64) Option {

@@ -7,7 +7,7 @@ body:
     attributes:
       label: Client version
       description: Output of `go list -m github.com/glassnode/glassnode-api-go-client`, or the commit.
-      placeholder: v0.2.0
+      placeholder: v0.1.0
     validations:
       required: true
   - type: input

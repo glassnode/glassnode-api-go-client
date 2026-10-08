@@ -1,46 +1,24 @@
 # Changelog
 
-## Unreleased
+## v0.1.0 — 2026-10-08
 
-Behaviour changes:
-
-- `GetBulkMetric` requires `Since`, as the API does, and returns an
-  `InputError` before sending a request without it.
-- `WithUserAgent` rejects any control character, not only CR and LF.
-- The default retry cap is 65 seconds instead of 30, so a `429` at the start
-  of a rate-limit window is retried after the window resets.
-- Responses are decoded as they stream in instead of being buffered first.
-
-Added:
-
-- `TimeSeriesPoint.ComputedAt` and `ObjectTimeSeriesPoint.ComputedAt` for
-  point-in-time metrics.
-- `BulkEntry.Params` with every selector of a bulk entry (`e`, `network`,
-  `category`, ...), which were dropped before.
-- `APIError.RetryAfter`, the wait requested through `Retry-After` or
-  `x-rate-limit-reset`; a `429` without `Retry-After` now honours the latter.
-- `ListExchanges`, `ListNetworks` and `ListMiners`.
-- `WithMaxResponseBytes` and `ErrResponseTooLarge` for callers that want to
-  bound response size; there is no limit by default.
-
-Fixed:
-
-- `GetMetricMetadata` accepts `parameters_defaults` values given as strings,
-  the form the API documentation describes, as well as lists.
-- `GetAPIUsage` no longer fails for accounts without API add-ons.
-- Error response bodies are drained so the connection is reused on retry.
-
-## v0.1.0 — 2026-10-01
-
-Initial release.
+Initial public release.
 
 - Metric time series: scalar (`GetTimeSeries`), object (`GetObjectTimeSeries`),
-  bulk (`GetBulkMetric`) and custom shapes (`GetMetric`).
-- Asset and metric metadata, metric lag statistics, metadata tag and category
-  lists, and API credit usage.
+  bulk (`GetBulkMetric`) and custom shapes (`GetMetric`). Point-in-time metrics
+  expose `ComputedAt`; bulk entries keep every selector in `Params`.
+- Asset and metric metadata, metric lag statistics, and lists of metric tags,
+  asset tags, categories, blockchains, exchanges, networks and miners.
+- API credit usage (`GetAPIUsage`).
+- CSV downloads of a metric to an `io.Writer` (`GetMetricCSV`).
 - Generic `Get` and `Raw` for endpoints without a dedicated method.
-- Authentication with an API key (header or query) or an OAuth access token,
-  either fixed or from a `TokenSource`.
-- Context cancellation, per-attempt timeouts and configurable retries with
-  backoff and `Retry-After` support.
-- Typed errors with credentials redacted from messages.
+- Authentication with an API key (header or query) or an existing OAuth access
+  token, fixed or from a `TokenSource`; a `TokenRefresher` can replace a token
+  the API rejected with `401`.
+- Context cancellation, a per-attempt timeout and retries with jittered
+  backoff that honour `Retry-After` and `x-rate-limit-reset`, with the wait
+  exposed as `APIError.RetryAfter`.
+- Optional response size limit (`WithMaxResponseBytes`).
+- Typed errors with credentials redacted from messages; redirects are never
+  followed.
+- No dependencies outside the standard library.

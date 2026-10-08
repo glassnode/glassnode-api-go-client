@@ -41,12 +41,10 @@ Credentials and the API address come from environment variables:
 | Variable | Purpose |
 | --- | --- |
 | `GLASSNODE_API_KEY` | Your API key |
-| `GLASSNODE_ACCESS_TOKEN` | An OAuth access token to use instead of an API key |
 | `GLASSNODE_BASE_URL` | A different API address, for example a local mock server |
 
-Set either `GLASSNODE_API_KEY` or `GLASSNODE_ACCESS_TOKEN`, not both. The
-credential is sent to `GLASSNODE_BASE_URL` when it is set, so only point it at
-a server you trust.
+The API key is sent to `GLASSNODE_BASE_URL` when it is set, so only point it
+at a server you trust.
 
 The shared setup code is in [internal/example](internal/example/example.go).
 

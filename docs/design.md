@@ -17,8 +17,8 @@ features of the TypeScript client,
   never reads environment variables, config files or global state, so two
   clients in one process never affect each other.
 - **Immutable, shareable client.** Options are validated once in `NewClient`.
-  After that the `Client` has no mutable state, so it can be shared between
-  goroutines without locking.
+  After that the `Client` has no mutable state except a lock-protected record
+  of the last token replacement, so it can be shared between goroutines.
 - **Typed where the API is stable, open where it is not.** Common response
   shapes have typed methods. Everything else goes through `GetMetric`, `Get`
   or `Raw`, so new metrics and endpoints work without a client release.
@@ -51,6 +51,9 @@ credentials attached to it, at a different server.
 - **Unknown fields are ignored**, so new fields in API responses do not break
   existing code. Required fields such as `t` and `v` are checked, and a missing
   one produces a `DecodeError` instead of a silent zero.
+- **CSV is passed through, not parsed.** `GetMetricCSV` copies the API's CSV
+  to a writer as it arrives; the client adds no columns and no parsing, so
+  large downloads need no memory and the file is exactly what the API sent.
 - **Bulk responses are unwrapped.** `GetBulkMetric` returns the contents of the
   `data` envelope directly. Each entry keeps all of its selectors in `Params`,
   because they depend on the metric (`e`, `network`, `category`, ...) and are
@@ -65,10 +68,13 @@ in proxy and access logs.
 
 OAuth access tokens can be supplied as a fixed token or through a
 `TokenSource`. The token source is called before every HTTP attempt, so a
-refreshed token is picked up on retries. The client does not perform the OAuth
-login, store tokens or refresh them on a `401`: how a session is obtained and
-kept is specific to each application. `glassnode-cli`, for example, keeps its
-own login and refresh logic.
+refreshed token is picked up on retries. A source that also implements
+`TokenRefresher` is asked for a new token once when the API answers `401`, and
+the request is repeated with it; this covers a token revoked before its
+expiry without the client knowing how tokens are obtained. The client does not
+perform the OAuth login or store tokens: how a session is obtained and kept is
+specific to each application. `glassnode-cli`, for example, keeps its own login
+and refresh logic and exposes it through a `TokenRefresher`.
 
 Exactly one authentication method must be configured. Accepting several and
 picking one would hide configuration mistakes.
@@ -88,12 +94,22 @@ The default cap is 65 seconds because the API's rate limit works in one-minute
 windows: a 429 at the start of a window asks for a wait of up to 60 seconds,
 and a 30-second cap would have returned the error without retrying at all.
 
-`Retry-After` (seconds or an HTTP date) is treated as a minimum delay. The API
+`Retry-After` (seconds or an HTTP date) is treated as a minimum delay. An
+integer above one year in either header is read as a Unix timestamp, so a
+change of format on the server would not silently turn every `429` into an
+immediate failure. The API
 reports rate limits per minute through `x-rate-limit-reset`, so a `429` without
 `Retry-After` uses that header instead; retrying a rate-limited request after
 a second would only fail again. If the delay exceeds `MaxDelay`, the client
 returns the error rather than retrying early or blocking for longer than the
 caller configured. The delay is exposed as `APIError.RetryAfter`.
+
+The response body is read completely inside the retry loop and decoded once,
+after it, from the first successful attempt. Decoding inside the loop would
+let a failed attempt leave values in the caller's destination: `encoding/json`
+merges into existing maps and keeps struct fields that the input lacks.
+stripe-go and go-github buffer for the same reason, and aws-sdk-go-v2
+deserialises every attempt into a fresh output value.
 
 The per-attempt timeout comes from the HTTP client. The total duration of a
 call is controlled by the context, which also interrupts the waits between
@@ -117,8 +133,8 @@ retries.
 - [x402](https://www.x402.org) payments, which the TypeScript client supports.
 - Response size limits by default. Public API clients such as go-github,
   stripe-go and slack-go do not impose one, because the server decides how
-  much a request returns. Responses are decoded as they stream in, and
-  `WithMaxResponseBytes` is available for callers that want a hard bound.
+  much a request returns. `WithMaxResponseBytes` is available for callers
+  that want a hard bound.
 - Response caching and client-side rate limiting. Applications that need them
   can add them in a custom `http.RoundTripper` or around the client.
 - Reading configuration from the environment or files.

@@ -53,7 +53,7 @@ func TestExtractedEndpointFixtures(t *testing.T) {
 		t.Fatalf("series %v %v", series, err)
 	}
 	bulk, err := client.GetBulkMetric(ctx, "market/marketcap_usd", &MetricParams{Assets: []string{"BTC", "ETH"}, Since: time.Unix(1770076800, 0)})
-	if err != nil || len(bulk) != 31 || bulk[0].Bulk[0].Asset != "BTC" {
+	if err != nil || len(bulk) != 31 || bulk[0].Bulk[0].Asset() != "BTC" {
 		t.Fatalf("bulk %v %v", bulk, err)
 	}
 	usage, err := client.GetAPIUsage(ctx)
@@ -118,7 +118,7 @@ func TestObjectAndNullableBulk(t *testing.T) {
 		t.Fatalf("object %v %v", points, err)
 	}
 	bulk, err := client.GetBulkMetric(context.Background(), "market/price", &MetricParams{Since: time.Unix(1, 0)})
-	if err != nil || bulk[0].Bulk[0].Value != nil || bulk[0].Bulk[1].Network != "eth" {
+	if err != nil || bulk[0].Bulk[0].Value != nil || bulk[0].Bulk[1].Network() != "eth" {
 		t.Fatalf("bulk %v %v", bulk, err)
 	}
 }
@@ -135,7 +135,7 @@ func TestBulkEntryKeepsSelectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := bulk[0].Bulk
-	if entries[0].Params["e"] != "binance" || entries[1].Params["e"] != "bitfinex" || entries[1].Asset != "BTC" {
+	if entries[0].Params["e"] != "binance" || entries[1].Params["e"] != "bitfinex" || entries[1].Asset() != "BTC" {
 		t.Errorf("exchange selectors lost: %+v", entries)
 	}
 	if entries[2].Params["category"] != "more_10y" || entries[2].Value != nil {
@@ -148,6 +148,14 @@ func TestBulkEntryKeepsSelectors(t *testing.T) {
 	var missingValue BulkEntry
 	if err := json.Unmarshal([]byte(`{"a":"BTC"}`), &missingValue); err == nil {
 		t.Error("accepted bulk entry without v")
+	}
+	// A non-string selector is kept as its JSON text and written back as a string.
+	var numeric BulkEntry
+	if err := json.Unmarshal([]byte(`{"a":"BTC","bps":5,"v":1}`), &numeric); err != nil || numeric.Params["bps"] != "5" {
+		t.Fatalf("numeric selector: %+v %v", numeric, err)
+	}
+	if encoded, _ := json.Marshal(numeric); string(encoded) != `{"a":"BTC","bps":"5","v":1}` {
+		t.Errorf("numeric selector marshal: %s", encoded)
 	}
 }
 
