@@ -1,0 +1,22 @@
+name: Feature request
+description: Support for an API endpoint, response shape or option the client lacks.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: The API call or workflow, and what makes it hard or impossible with the client today.
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: API documentation
+      description: Link to the relevant page on docs.glassnode.com, if any.
+      placeholder: https://docs.glassnode.com/basic-api/...
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Optional. How you imagine the client API for it, or a workaround you use now with `GetMetric`, `Get` or `Raw`.

@@ -159,3 +159,150 @@ func TestTokenSource401DoesNotRetry(t *testing.T) {
 		t.Fatalf("err=%v calls=%d", err, calls.Load())
 	}
 }
+
+type refreshingSource struct {
+	mu       sync.Mutex
+	token    string
+	next     string
+	err      error
+	delay    time.Duration // widens the window in which concurrent 401s overlap
+	refreshs int
+}
+
+func (s *refreshingSource) Token(context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.token, nil
+}
+
+func (s *refreshingSource) Refresh(context.Context) (string, error) {
+	time.Sleep(s.delay)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshs++
+	if s.err != nil {
+		return "", s.err
+	}
+	if s.next != "" {
+		s.token = s.next
+	}
+	return s.token, nil
+}
+
+func TestTokenRefresherRetriesOnceAfter401(t *testing.T) {
+	var headers []string
+	var mu sync.Mutex
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		headers = append(headers, r.Header.Get("Authorization"))
+		n := len(headers)
+		mu.Unlock()
+		if r.Header.Get("Authorization") != "Bearer fresh-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprintf(w, `{"message":"token %s rejected"}`, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			return
+		}
+		_ = n
+		fmt.Fprint(w, `[]`)
+	}
+	t.Run("new token is used and reused", func(t *testing.T) {
+		headers = nil
+		source := &refreshingSource{token: "stale-token", next: "fresh-token"}
+		client, _ := testClientWithKey(t, "", handler, WithTokenSource(source), WithRetryPolicy(RetryPolicy{2, time.Millisecond, 5 * time.Millisecond}))
+		if _, err := client.GetTimeSeries(context.Background(), "market/price", nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.GetTimeSeries(context.Background(), "market/price", nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(headers) != 3 || headers[0] != "Bearer stale-token" || headers[1] != "Bearer fresh-token" || headers[2] != "Bearer fresh-token" || source.refreshs != 1 {
+			t.Fatalf("headers=%v refreshes=%d", headers, source.refreshs)
+		}
+	})
+	t.Run("second 401 is returned and both tokens are redacted", func(t *testing.T) {
+		headers = nil
+		source := &refreshingSource{token: "stale-token", next: "other-token"}
+		client, _ := testClientWithKey(t, "", handler, WithTokenSource(source), WithRetryPolicy(RetryPolicy{2, time.Millisecond, 5 * time.Millisecond}))
+		_, err := client.GetTimeSeries(context.Background(), "market/price", nil)
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != 401 || len(headers) != 2 {
+			t.Fatalf("err=%v headers=%v", err, headers)
+		}
+		if strings.Contains(err.Error(), "stale-token") || strings.Contains(err.Error(), "other-token") || !strings.Contains(err.Error(), "[redacted]") {
+			t.Fatalf("token leaked: %v", err)
+		}
+	})
+	t.Run("unchanged token is not retried", func(t *testing.T) {
+		headers = nil
+		source := &refreshingSource{token: "stale-token"}
+		client, _ := testClientWithKey(t, "", handler, WithTokenSource(source))
+		_, err := client.GetTimeSeries(context.Background(), "market/price", nil)
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || len(headers) != 1 || source.refreshs != 1 {
+			t.Fatalf("err=%v headers=%v refreshes=%d", err, headers, source.refreshs)
+		}
+	})
+	t.Run("empty refreshed token is an AuthError", func(t *testing.T) {
+		headers = nil
+		source := &refreshingSource{token: "stale-token", next: " "}
+		client, _ := testClientWithKey(t, "", handler, WithTokenSource(source))
+		_, err := client.GetTimeSeries(context.Background(), "market/price", nil)
+		var authErr *AuthError
+		if !errors.As(err, &authErr) || len(headers) != 1 || !strings.Contains(err.Error(), "token refresher") {
+			t.Fatalf("err=%v headers=%v", err, headers)
+		}
+	})
+	t.Run("refresh failure is an AuthError", func(t *testing.T) {
+		headers = nil
+		source := &refreshingSource{token: "stale-token", err: errors.New("session expired, run login (stale-token)")}
+		client, _ := testClientWithKey(t, "", handler, WithTokenSource(source))
+		_, err := client.GetTimeSeries(context.Background(), "market/price", nil)
+		var authErr *AuthError
+		if !errors.As(err, &authErr) || len(headers) != 1 || strings.Contains(err.Error(), "stale-token") {
+			t.Fatalf("err=%v headers=%v", err, headers)
+		}
+	})
+	t.Run("concurrent 401s share one refresh", func(t *testing.T) {
+		headers = nil
+		source := &refreshingSource{token: "stale-token", next: "fresh-token", delay: 20 * time.Millisecond}
+		client, _ := testClientWithKey(t, "", handler, WithTokenSource(source))
+		var group sync.WaitGroup
+		errs := make(chan error, 10)
+		for range 10 {
+			group.Add(1)
+			go func() {
+				defer group.Done()
+				_, err := client.GetTimeSeries(context.Background(), "market/price", nil)
+				errs <- err
+			}()
+		}
+		group.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		stale, fresh := 0, 0
+		for _, h := range headers {
+			switch h {
+			case "Bearer stale-token":
+				stale++
+			case "Bearer fresh-token":
+				fresh++
+			}
+		}
+		if source.refreshs != 1 || stale != 10 || fresh != 10 {
+			t.Fatalf("refreshes=%d stale=%d fresh=%d", source.refreshs, stale, fresh)
+		}
+	})
+	t.Run("plain token source gets the 401", func(t *testing.T) {
+		headers = nil
+		client, _ := testClientWithKey(t, "", handler, WithTokenSource(TokenSourceFunc(func(context.Context) (string, error) { return "stale-token", nil })))
+		_, err := client.GetTimeSeries(context.Background(), "market/price", nil)
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != 401 || len(headers) != 1 {
+			t.Fatalf("err=%v headers=%v", err, headers)
+		}
+	})
+}

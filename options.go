@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // DefaultBaseURL is the standard Glassnode API endpoint.
@@ -80,7 +81,8 @@ func WithBearerToken(token string) Option {
 }
 
 // WithRetryPolicy replaces the default two retries with full-jitter backoff
-// from one second to thirty seconds. Delays must be positive when enabled.
+// from one second to 65 seconds, which covers the API's one-minute rate-limit
+// window. Delays must be positive when enabled.
 func WithRetryPolicy(policy RetryPolicy) Option {
 	return func(c *Client) error {
 		if policy.MaxRetries < 0 || policy.MaxRetries > 20 || policy.MaxRetries > 0 && (policy.BaseDelay <= 0 || policy.MaxDelay < policy.BaseDelay) {
@@ -92,13 +94,28 @@ func WithRetryPolicy(policy RetryPolicy) Option {
 }
 
 // WithUserAgent identifies the calling application. The SDK's default is
-// glassnode-api-go-client. An empty or multiline value is rejected.
+// glassnode-api-go-client. A blank value or one containing control characters
+// is rejected.
 func WithUserAgent(agent string) Option {
 	return func(c *Client) error {
-		if strings.TrimSpace(agent) == "" || strings.ContainsAny(agent, "\r\n") {
-			return &InputError{"user agent", "must be non-empty and contain no whitespace or control characters"}
+		if strings.TrimSpace(agent) == "" || strings.IndexFunc(agent, unicode.IsControl) >= 0 {
+			return &InputError{"user agent", "must be non-blank and contain no control characters"}
 		}
 		c.userAgent = agent
+		return nil
+	}
+}
+
+// WithMaxResponseBytes rejects response bodies larger than limit with a
+// ResponseTooLargeError instead of decoding them. The default, zero, is no
+// limit, as the API's full-history responses can legitimately be large. Use it
+// to bound memory where a failed call is preferable to an unbounded one.
+func WithMaxResponseBytes(limit int64) Option {
+	return func(c *Client) error {
+		if limit < 0 {
+			return &InputError{"max response bytes", "must not be negative"}
+		}
+		c.maxBytes = limit
 		return nil
 	}
 }

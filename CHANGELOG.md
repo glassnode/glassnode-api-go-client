@@ -1,28 +1,24 @@
 # Changelog
 
-## v0.1.0 — 2026-10-01
+## v0.1.0 — 2026-10-08
 
-Initial private SDK release. One dependency-free root `glassnode` package, with
-typed metrics, metadata and usage endpoints, context cancellation, configurable
-HTTP transport and bounded retries. Runnable examples are a separate module and
-excluded from the SDK distribution.
+Initial public release.
 
-Changes following the Fable review:
-
-- Preserve metric `parameters_defaults` from recorded API responses.
-- Include redacted diagnostic causes in decode and transport errors, preserving
-  the original error chain for `errors.Is` and `errors.As`.
-- Add `TokenSource`, `TokenSourceFunc`, `WithTokenSource` and `AuthError` for
-  application-owned OAuth refresh. Tokens are obtained per HTTP attempt and
-  redacted per call, including tokens used on earlier retries.
-- Reject conflicting authentication, invalid credential whitespace/control
-  characters and OAuth combined with query API-key authentication. Previously,
-  bearer tokens silently took precedence over a configured API key.
-- Make explicit `WithTimeout` override a supplied HTTP client's timeout in
-  either option order.
-- Extract JSON API error messages and bound detail after redaction.
-- Add recorded API contract coverage and tests for token-source concurrency,
-  cancellation, failures and redaction, interrupted reads, per-attempt timeouts,
-  HTTP-date Retry-After and malformed metadata/usage responses.
-
-OAuth login and token storage remain application-owned. x402 is deferred.
+- Metric time series: scalar (`GetTimeSeries`), object (`GetObjectTimeSeries`),
+  bulk (`GetBulkMetric`) and custom shapes (`GetMetric`). Point-in-time metrics
+  expose `ComputedAt`; bulk entries keep every selector in `Params`.
+- Asset and metric metadata, metric lag statistics, and lists of metric tags,
+  asset tags, categories, blockchains, exchanges, networks and miners.
+- API credit usage (`GetAPIUsage`).
+- CSV downloads of a metric to an `io.Writer` (`GetMetricCSV`).
+- Generic `Get` and `Raw` for endpoints without a dedicated method.
+- Authentication with an API key (header or query) or an existing OAuth access
+  token, fixed or from a `TokenSource`; a `TokenRefresher` can replace a token
+  the API rejected with `401`.
+- Context cancellation, a per-attempt timeout and retries with jittered
+  backoff that honour `Retry-After` and `x-rate-limit-reset`, with the wait
+  exposed as `APIError.RetryAfter`.
+- Optional response size limit (`WithMaxResponseBytes`).
+- Typed errors with credentials redacted from messages; redirects are never
+  followed.
+- No dependencies outside the standard library.

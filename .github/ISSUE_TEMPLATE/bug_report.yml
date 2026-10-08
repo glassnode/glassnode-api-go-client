@@ -1,0 +1,39 @@
+name: Bug report
+description: The client does something wrong or fails to decode an API response.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Client version
+      description: Output of `go list -m github.com/glassnode/glassnode-api-go-client`, or the commit.
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: go
+    attributes:
+      label: Go version
+      placeholder: go1.24.5 linux/amd64
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you called, what you expected and what you got. Paste the error message; the client never includes credentials in it, but check that your own logs don't either.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: A short program or the metric path and parameters. For a decoding problem, a few points of the raw JSON response are the most useful thing you can include.
+      render: go
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I have removed API keys and tokens from everything pasted above.
+          required: true

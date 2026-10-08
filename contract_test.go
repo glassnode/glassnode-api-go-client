@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestRecordedAPIContracts(t *testing.T) {
@@ -48,13 +49,39 @@ func TestRecordedAPIContracts(t *testing.T) {
 			_, err := c.GetTimeSeries(context.Background(), "market/price_usd_close", nil)
 			return err
 		}},
+		{"timeseries-active-count-pit-btc.json", func(c *Client) error {
+			points, err := c.GetTimeSeries(context.Background(), "addresses/active_count_pit", &MetricParams{Asset: "BTC"})
+			if err != nil {
+				return err
+			}
+			if points[0].ComputedAt == nil || *points[0].ComputedAt != 1790985731 || *points[0].Value != 729981 {
+				return fmt.Errorf("lost computed_at: %+v", points[0])
+			}
+			return nil
+		}},
+		{"timeseries-ssr-pit-btc.json", func(c *Client) error {
+			points, err := c.GetObjectTimeSeries(context.Background(), "indicators/ssr_pit", &MetricParams{Asset: "BTC"})
+			if err != nil {
+				return err
+			}
+			if points[0].ComputedAt == nil || *points[0].ComputedAt != 1790985823 || points[0].Object["h"] == nil {
+				return fmt.Errorf("lost computed_at: %+v", points[0])
+			}
+			return nil
+		}},
 		{"timeseries-price-usd-ohlc-btc.json", func(c *Client) error {
 			_, err := c.GetObjectTimeSeries(context.Background(), "market/price_usd_ohlc", nil)
 			return err
 		}},
 		{"bulk-marketcap-usd.json", func(c *Client) error {
-			_, err := c.GetBulkMetric(context.Background(), "market/marketcap_usd", nil)
-			return err
+			bulk, err := c.GetBulkMetric(context.Background(), "market/marketcap_usd", &MetricParams{Since: time.Unix(1735689600, 0)})
+			if err != nil {
+				return err
+			}
+			if eth := bulk[0].Bulk[1]; eth.Asset() != "ETH" || eth.Network() != "eth" || eth.Params["network"] != "eth" {
+				return fmt.Errorf("lost recorded bulk selectors: %+v", eth)
+			}
+			return nil
 		}},
 	} {
 		t.Run(tt.file, func(t *testing.T) {
@@ -82,6 +109,7 @@ func TestMalformedMetadataAndUsage(t *testing.T) {
 			return err
 		}},
 		{"missing credits", `{"apiAddons":[]}`, func(c *Client) error { _, err := c.GetAPIUsage(context.Background()); return err }},
+		{"non-array usage", `[]`, func(c *Client) error { _, err := c.GetAPIUsage(context.Background()); return err }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(tt.body)) })

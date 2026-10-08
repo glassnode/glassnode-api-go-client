@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -134,6 +135,13 @@ func TestInputRejectedBeforeRequest(t *testing.T) {
 	if _, err := client.GetBulkMetric(context.Background(), "market/price/bulk", nil); err == nil {
 		t.Error("accepted bulk suffix")
 	}
+	if _, err := client.GetBulkMetric(context.Background(), "market/price", &MetricParams{Assets: []string{"BTC"}}); err == nil {
+		t.Error("accepted bulk request without Since")
+	}
+	// An empty s is rejected by the query validation, not treated as present.
+	if _, err := client.GetBulkMetric(context.Background(), "market/price", &MetricParams{Extra: url.Values{"s": {""}}}); err == nil {
+		t.Error("accepted bulk request with an empty s")
+	}
 	if _, err := client.GetMetricMetadata(context.Background(), "market/price", &MetricParams{Extra: url.Values{"path": {"/other"}}}); err == nil {
 		t.Error("accepted reserved path")
 	}
@@ -156,6 +164,37 @@ func TestErrorsAndRedaction(t *testing.T) {
 		if strings.Contains(err.Error(), secret) || strings.Contains(apiErr.Detail, secret) {
 			t.Errorf("leaked %s", secret)
 		}
+	}
+}
+
+func TestHTMLErrorBodiesAreSummarised(t *testing.T) {
+	page := "<html><head><title>401 Authorization Required</title></head><body><h1>401</h1><script>(function(){var secret='test-secret-key'})()</script></body></html>"
+	for _, tt := range []struct{ name, contentType, body, want string }{
+		{"html with title", "text/html", page, "Authorization Required"},
+		{"html without title", "text/html; charset=utf-8", "<html><body>nope</body></html>", "Unauthorized"},
+		{"title is only the status code", "text/html", "<html><head><title>401</title></head></html>", "Unauthorized"},
+		{"title with entities", "text/html", "<title>Access &amp; Authorization Required &mdash; 401</title>", "Access & Authorization Required — 401"},
+		{"html without content type", "", "  <!doctype html><title>Blocked</title>", "Blocked"},
+		{"json message", "application/json", `{"message":"bad key"}`, "bad key"},
+		{"plain text", "text/plain", "resource not found", "resource not found"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if tt.contentType != "" {
+					w.Header().Set("Content-Type", tt.contentType)
+				}
+				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprint(w, tt.body)
+			})
+			_, err := client.Raw(context.Background(), "/v1/test", nil)
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) || apiErr.Detail != tt.want {
+				t.Fatalf("detail=%q err=%v", apiErr.Detail, err)
+			}
+			if strings.Contains(err.Error(), "<") || strings.Contains(err.Error(), "test-secret-key") {
+				t.Fatalf("markup or secret leaked: %v", err)
+			}
+		})
 	}
 }
 
@@ -195,6 +234,59 @@ func TestRetriesAndRetryAfter(t *testing.T) {
 	}
 	if _, ok := parseRetryAfter("-1", now); ok {
 		t.Fatal("negative retry delay")
+	}
+	// A Unix timestamp is a point in time, not a 56-year wait.
+	epoch := strconv.FormatInt(now.Add(45*time.Second).Unix(), 10)
+	if delay, ok := parseRetryAfter(epoch, now); !ok || delay != 45*time.Second {
+		t.Errorf("epoch %s: %v %v", epoch, delay, ok)
+	}
+	if delay, ok := parseRetryAfter(strconv.FormatInt(now.Add(-time.Hour).Unix(), 10), now); !ok || delay != 0 {
+		t.Errorf("past epoch: %v %v", delay, ok)
+	}
+}
+
+// The API's rate limit works in one-minute windows and reports the seconds
+// until the window resets; 60 is the value seen right after a reset.
+func TestRateLimitResetHeaderIsSeconds(t *testing.T) {
+	client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Rate-Limit-Limit", "600")
+		w.Header().Set("X-Rate-Limit-Remaining", "0")
+		w.Header().Set("X-Rate-Limit-Reset", "60")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"message":"rate limited"}`)
+	})
+	_, err := client.Raw(context.Background(), "/v1/test", nil)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.RetryAfter != 60*time.Second {
+		t.Fatalf("error %#v", err)
+	}
+}
+
+func TestRateLimitReset(t *testing.T) {
+	for _, tt := range []struct {
+		status       int
+		wantAttempts int32
+		wantDelay    time.Duration
+	}{
+		{429, 1, 100 * time.Second},
+		{503, 3, 0},
+	} {
+		t.Run(fmt.Sprint(tt.status), func(t *testing.T) {
+			var attempts atomic.Int32
+			client, _ := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				attempts.Add(1)
+				w.Header().Set("X-Rate-Limit-Reset", "100")
+				w.WriteHeader(tt.status)
+			}, WithRetryPolicy(RetryPolicy{2, time.Millisecond, time.Second}))
+			_, err := client.Raw(context.Background(), "/v1/test", nil)
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) || apiErr.RetryAfter != tt.wantDelay {
+				t.Fatalf("error %#v", err)
+			}
+			if attempts.Load() != tt.wantAttempts {
+				t.Errorf("attempts=%d want %d", attempts.Load(), tt.wantAttempts)
+			}
+		})
 	}
 }
 
@@ -277,7 +369,7 @@ func TestConcurrentClientAndQueryIsolation(t *testing.T) {
 		}
 		fmt.Fprint(w, `{"data":[]}`)
 	})
-	params := &MetricParams{Assets: []string{"BTC", "ETH"}, Extra: url.Values{"network": {"eth", "sol"}}}
+	params := &MetricParams{Assets: []string{"BTC", "ETH"}, Since: time.Unix(1700000000, 0), Extra: url.Values{"network": {"eth", "sol"}}}
 	var group sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		group.Add(1)
@@ -367,13 +459,10 @@ func TestRetryAfterMinimumWait(t *testing.T) {
 
 func TestCredentialRedactionVariants(t *testing.T) {
 	secret := `secret"with spaces&chars`
-	client, err := NewClient(secret)
-	if err != nil {
-		t.Fatal(err)
-	}
+	r := &redactor{secrets: []string{secret}}
 	encoded, _ := json.Marshal(secret)
 	for _, text := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret), string(encoded)} {
-		if got := client.redact(text); strings.Contains(got, "secret") {
+		if got := r.redact(text); strings.Contains(got, "secret") {
 			t.Errorf("failed redaction: %s", got)
 		}
 	}

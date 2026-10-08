@@ -22,15 +22,12 @@ func Run(run func(context.Context, *glassnode.Client, *glassnode.MetricParams) e
 		fmt.Fprintln(os.Stderr, "days and timeout must be positive")
 		os.Exit(2)
 	}
-	key, token := os.Getenv("GLASSNODE_API_KEY"), os.Getenv("GLASSNODE_ACCESS_TOKEN")
-	if (key == "") == (token == "") {
-		fmt.Fprintln(os.Stderr, "set exactly one of GLASSNODE_API_KEY or GLASSNODE_ACCESS_TOKEN")
+	key := os.Getenv("GLASSNODE_API_KEY")
+	if key == "" {
+		fmt.Fprintln(os.Stderr, "set GLASSNODE_API_KEY")
 		os.Exit(2)
 	}
 	var options []glassnode.Option
-	if token != "" {
-		options = append(options, glassnode.WithBearerToken(token))
-	}
 	if baseURL := os.Getenv("GLASSNODE_BASE_URL"); baseURL != "" {
 		options = append(options, glassnode.WithBaseURL(baseURL))
 	}

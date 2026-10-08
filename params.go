@@ -99,6 +99,12 @@ func (p *MetricParams) Values() (url.Values, error) {
 }
 
 func metricQuery(path string, params *MetricParams, metadata bool) (string, url.Values, error) {
+	return metricQueryFormat(path, params, metadata, "json")
+}
+
+// metricQueryFormat is metricQuery with an explicit response format. Only the
+// CSV download sets anything other than json; decoded responses must be JSON.
+func metricQueryFormat(path string, params *MetricParams, metadata bool, format string) (string, url.Values, error) {
 	path = "/" + strings.TrimPrefix(path, "/")
 	if err := validateEndpoint(path); err != nil {
 		return "", nil, &InputError{"metric path", "expected a relative metric path without URL, query or traversal"}
@@ -113,6 +119,9 @@ func metricQuery(path string, params *MetricParams, metadata bool) (string, url.
 		}
 		q.Set("path", path)
 	}
-	q.Set("f", "json")
+	if existing := q.Get("f"); existing != "" && !strings.EqualFold(existing, format) {
+		return "", nil, &InputError{"f", "the response format is set by the method; use GetMetricCSV for CSV"}
+	}
+	q.Set("f", format)
 	return path, q, nil
 }

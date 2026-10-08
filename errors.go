@@ -1,12 +1,20 @@
 package glassnode
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 // APIError describes a non-2xx response. Detail is bounded and credential-redacted.
+// RetryAfter is how long the server asked the client to wait, taken from the
+// Retry-After header or, for 429 responses, from x-rate-limit-reset. It is zero
+// when the server gave no such hint.
 type APIError struct {
 	StatusCode int
 	Endpoint   string
 	Detail     string
+	RetryAfter time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -21,6 +29,25 @@ func (e *APIError) Error() string {
 func (e *APIError) Retryable() bool {
 	return e.StatusCode == 429 || e.StatusCode >= 500 && e.StatusCode <= 599
 }
+
+// ErrResponseTooLarge is the cause of every ResponseTooLargeError, for
+// errors.Is.
+var ErrResponseTooLarge = errors.New("response exceeds the configured size limit")
+
+// ResponseTooLargeError reports a successful response whose body exceeds the
+// WithMaxResponseBytes limit. It is a decision of the client's configuration,
+// not a transport or decoding failure, and the call is not retried.
+type ResponseTooLargeError struct {
+	Endpoint string
+	Limit    int64
+}
+
+func (e *ResponseTooLargeError) Error() string {
+	return fmt.Sprintf("glassnode: %s: response exceeds the configured limit of %d bytes", e.Endpoint, e.Limit)
+}
+
+// Unwrap returns ErrResponseTooLarge.
+func (e *ResponseTooLargeError) Unwrap() error { return ErrResponseTooLarge }
 
 // InputError describes invalid configuration or arguments, before any request.
 type InputError struct{ Field, Message string }

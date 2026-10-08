@@ -1,49 +1,61 @@
-# Runnable Go SDK examples
+# Examples
 
-Requires Go 1.24+ and a repository checkout. All programs use the local SDK via
-`replace ... => ..`; there is no need to download the private module.
+Small programs that call the Glassnode API with this client. They build against
+the client in this repository checkout, so you do not need to install the
+module first.
 
 ```sh
 cd examples
-export GLASSNODE_API_KEY='your-api-key'
+export GLASSNODE_API_KEY=your-api-key
 go run ./price
 ```
 
-Set exactly one of `GLASSNODE_API_KEY` or `GLASSNODE_ACCESS_TOKEN`. The latter
-accepts an existing OAuth bearer token; these programs do not perform login or
-refresh. Credentials are read only by example setup, never implicitly by the SDK.
-Requests use your account's API credits and require access to the selected metric.
+| Program | What it shows |
+| --- | --- |
+| `price` | Daily BTC closing prices with `GetTimeSeries`, including gaps |
+| `ohlc` | Daily OHLC prices with `GetObjectTimeSeries` |
+| `bulk` | Market cap of BTC and ETH in one request with `GetBulkMetric` |
+| `metadata` | Metadata of the closing-price metric with `GetMetricMetadata` |
+| `usage` | Credits used and the monthly allowance with `GetAPIUsage` |
+| `custom` | Decoding into your own types with `GetMetric`, keeping full numeric precision |
 
-| Command | Demonstrates | Output |
+Every request uses API credits from your account, and the metrics must be
+included in your plan.
+
+## Options
+
+All programs accept the same flags:
+
+| Flag | Default | Used by |
 | --- | --- | --- |
-| `go run ./price` | Nullable scalar BTC closing prices | Date and USD price, including gaps |
-| `go run ./ohlc` | Object time series | OHLC points as JSON |
-| `go run ./bulk` | Repeated asset selectors for BTC and ETH | Unwrapped bulk market-cap points as JSON |
-| `go run ./metadata` | Typed metric metadata | Closing-price metadata as JSON |
-| `go run ./usage` | Account credit usage | Used credits and monthly allowance |
-| `go run ./custom` | Caller-owned types and `json.Number` | Prices as JSON with numeric precision preserved |
-
-The metric examples default to 30 days of daily data. Change the asset, range or
-whole-operation deadline with flags:
+| `-asset` | `BTC` | `price`, `ohlc`, `metadata`, `custom` |
+| `-days` | `30` | `price`, `ohlc`, `bulk`, `custom` |
+| `-timeout` | `30s` | all |
 
 ```sh
-go run ./price -asset ETH -days 7 -timeout 15s
-go run ./price -h
+go run ./price -asset ETH -days 7
 ```
 
-Bulk always selects BTC and ETH. Metadata uses only the asset flag; usage ignores
-asset and days. Shared [setup](internal/example/example.go) handles configuration
-and errors so each program focuses on its SDK operation.
+Credentials and the API address come from environment variables:
 
-`GLASSNODE_BASE_URL` can point at a local test server. Only use a server you trust:
-the example sends your configured credential there. No production requests are
-needed to compile these programs:
+| Variable | Purpose |
+| --- | --- |
+| `GLASSNODE_API_KEY` | Your API key |
+| `GLASSNODE_BASE_URL` | A different API address, for example a local mock server |
+
+The API key is sent to `GLASSNODE_BASE_URL` when it is set, so only point it
+at a server you trust.
+
+The shared setup code is in [internal/example](internal/example/example.go).
+
+## How this directory is built
+
+The directory is its own Go module. Its `go.mod` uses a `replace` directive to
+build against the client in the parent directory, and Go leaves it out of the
+client's module archive. `go test ./...` in the repository root does not
+include it, so check it separately:
 
 ```sh
-go vet ./...
 go build ./...
+golangci-lint run ./...
 ```
-
-This directory is a nested Go module, so Go excludes it from the parent SDK's
-module archive. Root `go test ./...` does not traverse it; CI vets and builds this
-module separately. These programs are repository examples, not a published module.
