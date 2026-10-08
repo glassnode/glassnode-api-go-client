@@ -7,7 +7,8 @@ Please do not report security issues through public GitHub issues.
 Use GitHub's private vulnerability reporting instead: open the
 [Security tab](https://github.com/glassnode/glassnode-api-go-client/security/advisories/new)
 of this repository and choose **Report a vulnerability**. The report reaches the
-maintainers listed in [CODEOWNERS](CODEOWNERS) only.
+maintainers listed in [CODEOWNERS](CODEOWNERS) only. If you can't use GitHub,
+email security@glassnode.com.
 
 Include what you can of the following:
 

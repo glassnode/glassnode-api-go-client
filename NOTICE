@@ -1,5 +1,5 @@
 Glassnode Go API client
-Copyright 2026 Glassnode
+Copyright 2026 Glassnode AG
 
 Endpoint models and fixtures were extracted and adapted from
 https://github.com/glassnode/glassnode-cli/tree/340ea59/internal/api
