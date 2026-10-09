@@ -1,1 +1,14 @@
+# Local env and credentials
+.env
+.env.*
+*.local
+*.pem
+*.key
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+
+# Build and test output
 coverage.out
