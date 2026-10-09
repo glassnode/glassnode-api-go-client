@@ -1,9 +1,5 @@
 # glassnode-api-go-client: agent instructions
 
-Follow the Glassnode engineering handbook in `glassnode/tech`
-(https://gitlab.com/glassnode/tech, Glassnode engineers only). Start with its
-`handbook/README.md`.
-
 ## Contents
 
 - [What this repo is](#what-this-repo-is)
