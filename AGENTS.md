@@ -1,43 +1,14 @@
 # glassnode-api-go-client: agent instructions
 
-## Contents
-
-- [What this repo is](#what-this-repo-is)
-- [Commands](#commands)
-- [Layout](#layout)
-- [Conventions](#conventions)
-- [Don't](#dont)
-
-## What this repo is
-
-The public Go client for the Glassnode API. Details: [README.md](README.md).
-
-## Commands
-
-- Lint: `golangci-lint run ./...` (v2), and the same in `examples/`
-- Test: `go test -race ./...`
-- Build examples: `cd examples && go build ./...`
-- Module files: `go mod tidy -diff` in the root and in `examples/`
-
-Run lint and tests before opening a PR.
-
-## Layout
-
-- `*.go` at the root: the client, one package `glassnode`.
-- `testdata/`: recorded responses for unit tests; `testdata/contract/`: real API responses
-  for `contract_test.go` (see its README).
-- `examples/`: runnable programs, a separate module that calls the live API.
-- `docs/design.md`: design decisions.
-
-## Conventions
-
-- Commit messages: `type(scope): summary` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
-- Field and parameter names follow the API documentation; don't rename them.
-- User-visible changes add a line to the `Unreleased` section of `CHANGELOG.md`.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first: setup, commands, commit format and
+guidelines all live there. Before opening a PR, run the checks in its "Making a change"
+section, in the root and in `examples/`.
 
 ## Don't
 
-- Add dependencies outside the standard library.
-- Change or remove exported names, struct fields or behaviour without an issue first.
-- Edit files in `testdata/contract/` by hand.
-- Put API keys in code, tests or fixtures; tests need none.
+- Edit `testdata/contract/` by hand: it holds recorded real API responses
+  (see its [README](testdata/contract/README.md)).
+- Run the programs in `examples/` to test a change: they call the live API and need a key.
+  `go build ./...` in `examples/` is enough.
+- Add a dependency, or change an exported name, field or behaviour: see the guidelines in
+  CONTRIBUTING.md.
