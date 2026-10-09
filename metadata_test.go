@@ -193,3 +193,44 @@ func TestMetadataFilterAndRepeatedValues(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAllowance(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+		want Allowance
+		ok   bool
+	}{
+		{"monthly (recorded)", "", Allowance{Limit: 5000000, Period: AllowanceMonthly, Used: 386417}, true},
+		{"daily counts today's requests", `{"creditsUsed":4000,"dailyRequestsUsed":2,"apiAddons":[{"value":50,"period":"daily","rpm":10}]}`, Allowance{Limit: 50, Period: AllowanceDaily, Used: 2}, true},
+		{"no period is monthly", `{"creditsUsed":6,"apiAddons":[{"value":1500000}]}`, Allowance{Limit: 1500000, Period: AllowanceMonthly, Used: 6}, true},
+		{"largest add-on of one period", `{"creditsUsed":6,"apiAddons":[{"value":10,"period":"monthly"},{"value":30,"period":"monthly"}]}`, Allowance{Limit: 30, Period: AllowanceMonthly, Used: 6}, true},
+		{"unknown period", `{"creditsUsed":6,"apiAddons":[{"value":10,"period":"weekly"}]}`, Allowance{}, false},
+		{"mixed periods", `{"creditsUsed":6,"dailyRequestsUsed":1,"apiAddons":[{"value":5000000,"period":"monthly"},{"value":50,"period":"daily"}]}`, Allowance{}, false},
+		{"no add-on", `{"creditsUsed":6,"apiAddons":[]}`, Allowance{}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(tt.body)
+			if tt.body == "" {
+				var err error
+				if body, err = os.ReadFile("testdata/contract/user-api-usage-monthly.json"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var usage APIUsage
+			if err := json.Unmarshal(body, &usage); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := usage.Allowance()
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("Allowance() = %+v, %v; want %+v, %v", got, ok, tt.want, tt.ok)
+			}
+		})
+	}
+	if left := (Allowance{Limit: 50, Used: 70}).Remaining(); left != 0 {
+		t.Errorf("Remaining over the limit = %d, want 0", left)
+	}
+	if left := (Allowance{Limit: 50, Used: 2}).Remaining(); left != 48 {
+		t.Errorf("Remaining = %d, want 48", left)
+	}
+}

@@ -16,7 +16,7 @@ go run ./price
 | `ohlc` | Daily OHLC prices with `GetObjectTimeSeries` |
 | `bulk` | Market cap of BTC and ETH in one request with `GetBulkMetric` |
 | `metadata` | Metadata of the closing-price metric with `GetMetricMetadata` |
-| `usage` | Credits used and the monthly allowance with `GetAPIUsage` |
+| `usage` | The account's daily or monthly allowance and what is left of it, with `GetAPIUsage` |
 | `custom` | Decoding into your own types with `GetMetric`, keeping full numeric precision |
 
 Every request uses API credits from your account, and the metrics must be
