@@ -17,6 +17,16 @@ func run(ctx context.Context, client *glassnode.Client, params *glassnode.Metric
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Credits used: %d\nMonthly allowance: %d\n", usage.CreditsUsed, usage.CreditsPerMonth())
+	allowance, ok := usage.Allowance()
+	if !ok {
+		fmt.Printf("No single API allowance found; %d credits used this month\n", usage.CreditsUsed)
+		return nil
+	}
+	unit := "credits"
+	if allowance.Period == glassnode.AllowanceDaily {
+		unit = "requests"
+	}
+	fmt.Printf("%s allowance: %d %s, used %d, remaining %d\n",
+		allowance.Period, allowance.Limit, unit, allowance.Used, allowance.Remaining())
 	return nil
 }

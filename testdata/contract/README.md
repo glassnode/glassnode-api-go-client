@@ -13,3 +13,7 @@ except that `asset-metadata.json` is cut down to its first three assets.
 The two `*-pit-*` files were recorded on 2026-10-05 with this client during a
 shape audit of all metrics; they cover the `computed_at` field that
 point-in-time metrics add to every point.
+
+`user-api-usage-monthly.json` was recorded on 2026-10-09 from
+`/v1/user/api_usage`, with the customer ID replaced; it covers the `period`
+field of add-ons and the `dailyRequestsUsed` counter.

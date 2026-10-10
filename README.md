@@ -84,7 +84,7 @@ Pick the method that matches the shape of the metric's response:
 | Asset metadata | `ListAssets` |
 | Metric tags, asset tags, categories, blockchains | `ListMetricTags`, `ListAssetTags`, `ListAssetCategories`, `ListAssetBlockchains` |
 | Exchanges, networks, miners | `ListExchanges`, `ListNetworks`, `ListMiners` |
-| Account credit usage | `GetAPIUsage` |
+| Account allowance and usage | `GetAPIUsage`, then `Allowance()` |
 | Endpoints without a dedicated method | `Get` (decodes JSON) or `Raw` (returns bytes) |
 
 Things to keep in mind:
@@ -130,6 +130,26 @@ from regular ones:
 - Every combination of selectors is billed like a separate request, and
   leaving out `Assets` selects all assets. Always set the selectors you need.
 - Bulk endpoints are not available on the Light API.
+
+### Allowance and usage
+
+An account's API allowance is either monthly, in credits, or daily, in
+requests (the Advanced plan's Light API). `Allowance` pairs the limit with the
+counter of the same period, so the remainder is right for both:
+
+```go
+usage, err := client.GetAPIUsage(ctx)
+if err != nil {
+	return err
+}
+if allowance, ok := usage.Allowance(); ok {
+	fmt.Printf("%s: %d of %d used\n", allowance.Period, allowance.Used, allowance.Limit)
+}
+```
+
+`ok` is false when the account has no add-on or when its add-ons report an
+unknown or mixed period; the raw `APIAddons`, `CreditsUsed` and
+`DailyRequestsUsed` are still available.
 
 ### Additional parameters
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `APIAddon.Period` (`daily` or `monthly`), `APIAddon.RPM` and
+  `APIUsage.DailyRequestsUsed` from the usage endpoint.
+- `APIUsage.Allowance` returns the limit, its period and the usage counted
+  against it: requests today on a daily allowance, credits this month on a
+  monthly one. It reports false for no, unknown or mixed periods instead of
+  guessing.
+- `CreditsPerMonth` is deprecated: an allowance may be daily.
+
 ## v0.1.0 — 2026-10-08
 
 Initial public release.
