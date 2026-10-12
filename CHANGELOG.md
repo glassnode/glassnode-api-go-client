@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.2.0 — 2026-10-11
 
 - `APIAddon.Period` (`daily` or `monthly`), `APIAddon.RPM` and
   `APIUsage.DailyRequestsUsed` from the usage endpoint.
