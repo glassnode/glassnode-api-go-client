@@ -379,6 +379,12 @@ a security issue, follow [SECURITY.md](SECURITY.md) rather than opening a
 public issue. This project follows the
 [Contributor Covenant](CODE_OF_CONDUCT.md) code of conduct.
 
+## Production readiness
+
+| Path | Type | Level |
+|---|---|---|
+| `/` | library | external |
+
 ## License
 
 Apache License 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE).
